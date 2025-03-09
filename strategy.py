@@ -80,7 +80,32 @@ cerebro.adddata(data_feed)
 cerebro.broker.set_cash(1000)
 # Set the commission to 0.1% (divide by 100 to remove the %)
 cerebro.broker.setcommission(commission=0.001)
+
+# Add analyzers to the backtest
+cerebro.addanalyzer(btr.analyzers.SharpeRatio, _name = 'sharpe_ratio')
+cerebro.addanalyzer(btr.analyzers.DrawDown, _name = 'drawdown')
+cerebro.addanalyzer(btr.analyzers.Returns, _name = 'returns')
+cerebro.addanalyzer(btr.analyzers.SQN, _name = 'system_quality_number')
+cerebro.addanalyzer(btr.analyzers.TradeAnalyzer, _name = 'trade_analyzer')
+cerebro.addanalyzer(btr.analyzers.Transactions, _name = 'transactions')
+
 # Run the backtest
-cerebro.run()
+results = cerebro.run()
+
+# Extract and print the results
+sharpe_ratio = results[0].analyzers.sharpe_ratio.get_analysis()
+drawdown = results[0].analyzers.drawdown.get_analysis()
+returns = results[0].analyzers.returns.get_analysis()
+system_quality_number = results[0].analyzers.system_quality_number.get_analysis()
+trade_analyzer = results[0].analyzers.trade_analyzer.get_analysis()
+transactions = results[0].analyzers.transactions.get_analysis()
+
+print(f"Sharpe Ratio: {sharpe_ratio['sharperatio']}")
+print(f"Max Drawdown: {drawdown['max']['drawdown']}%")
+print(f"Total Returns: {returns['rtot']*100}%")
+print(f"System Quality Number (SQN): {system_quality_number['system_quality_number']}")
+print(f"Total Number of Trades: {trade_analyzer['total']['total']}")
+print(f"Total Number of Transactions: {len(transactions)}")
+
 # Plot the results
 cerebro.plot()
