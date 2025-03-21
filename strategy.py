@@ -2,19 +2,18 @@
 import pandas as pd
 import backtrader as btr
 import datetime
-from indicators import *
-from clean_data import *
+from clean_data import cleaned_df
 
 '''
-# Data gatheringwith yahoo finance, unlimited lookback for daily on above
+# Data gathering with yahoo finance, unlimited lookback for daily on above
 # for lower timeframe you need to find other data sources
 import yfinance as yf
 data = yf.Ticker('AAPL').history(period='1y')
 print(data.head())
 '''
 
-# Clean CSV file from clean_data.py
-clean_data = cleaned_df
+# Convert the cleaned DataFrame from clean_day.py to a Backtrader data feed (mandatory for cerebro engine)
+data_feed = btr.feeds.PandasData(dataname=cleaned_df, datetime=0, open=1, high=2, low=3, close=4, volume=5, openinterest=-1)
 
 # Define your strategy
 class SmaCross(btr.SignalStrategy):
@@ -56,9 +55,9 @@ class SmaCross(btr.SignalStrategy):
 # Activate the backtrader engine
 cerebro = btr.Cerebro()
 # Add the strategy to the engine
-cerebro.addstrategy(SmaCross)  
+cerebro.addstrategy(SmaCross)
 # Add the data feed to the engine
-cerebro.adddata(clean_data)
+cerebro.adddata(data_feed)
 # Set the initial cash amount for the backtest
 cerebro.broker.set_cash(1000)
 # Set the commission to 0.1% (divide by 100 to remove the %)
