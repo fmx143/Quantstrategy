@@ -3,10 +3,10 @@ import os
 from apy import *
 
 # Define the correct column order
-EXPECTED_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
+EXPECTED_COLUMNS = ["datetime", "open", "high", "low", "close"]
 
 def load_csv(file_path):
-    """Load the CSV file and try to detect the delimiter automatically."""
+    print("Loading the CSV file and try to detect the delimiter automatically.")
     try:
         df = pd.read_csv(file_path)
         return df
@@ -15,7 +15,7 @@ def load_csv(file_path):
         return None
 
 def check_header(df):
-    """Check if the first row contains the expected column names."""
+    print("Checking if the first row contains the expected column names.")
     actual_columns = list(df.columns)
     print(actual_columns)
 
@@ -23,29 +23,74 @@ def check_header(df):
         print("✅ The columns are already in the correct order.")
         return True
 
-    # Check if all required columns exist
-    missing_columns = [col for col in EXPECTED_COLUMNS if col not in actual_columns]
+    # Check missing columns and extra ones
+    ''' senior way : missing_columns = [col for col in EXPECTED_COLUMNS if col not in actual_columns]
+    senior way : extra_columns = [col for col in actual_columns if col not in EXPECTED_COLUMNS] '''
+    missing_columns = []
+    for col in EXPECTED_COLUMNS:
+        if col not in actual_columns:
+            missing_columns.append(col)
+
+    extra_columns = []
+    for col in actual_columns:
+        if col not in EXPECTED_COLUMNS:
+            extra_columns.append(col)
+    
     if missing_columns:
         print(f"⚠️ Warning: Missing columns: {missing_columns}")
-        user_input = input("Do you want to continue? (yes/no): ").strip().lower()
+
+    if extra_columns:
+        print(f"ℹ️ Notice: Extra columns detected (will be ignored): {extra_columns}")
+
+    # Ask for user confirmation if required columns are missing
+    if missing_columns:
+        user_input = input("Some required columns are missing. Do you want to continue? (yes/no): ").strip().lower()
         if user_input != "yes":
             print("❌ Operation canceled.")
             return False
-
+        print("✅ Continuing despite missing columns...")
     return True
 
+def rename_first_column_to_datetime(df):
+    """Ensure the first column is named 'datetime'."""
+    if df.columns[0].lower() != "datetime":
+        print(f"🔄 Renaming the first column '{df.columns[0]}' to 'datetime'.")
+        df.columns = ["datetime"] + list(df.columns[1:])
+    else:
+        print("✅ The first column is already named 'datetime'.")
+    return df
+
+
 def reorder_columns(df):
-    """Rearrange the columns to match the expected order."""
-    df = df.copy()  # Avoid modifying the original DataFrame
+    """Display current column order and allow user to reorder them."""
+    print("Current column order detected:")
+    
+    # Display original columns with their indexes
+    for i, col in enumerate(df.columns):
+        print(f"{col} ({i})", end=", ")
+    print("\n")  # New line for better readability
 
-    # Reorder columns by keeping the ones that exist, and adding missing ones as empty
-    reordered_df = df.reindex(columns=EXPECTED_COLUMNS)
+    # Ask user for the new order
+    user_input = input("Enter the new column order as comma-separated indexes (0,1,3,2,4): ").strip()
+    
+    try:
+        new_order = [int(i) for i in user_input.split(",")]
+        if sorted(new_order) != list(range(len(df.columns))):
+            print("❌ Invalid column order. Please enter all indexes in a valid sequence.")
+            return df  # Return original DataFrame if the input is incorrect
+        
+        # Apply new order
+        new_columns = [df.columns[i] for i in new_order]
+        df = df[new_columns]
+        print("✅ Columns have been rearranged successfully.")
 
-    print("✅ Columns have been reordered.")
-    return reordered_df
+    except ValueError:
+        print("❌ Invalid input. Please enter numeric indexes separated by commas.")
+    
+    return df
 
 def fix_header_format(df):
-    """Format the header: lowercase except for the first letter."""
+    print("Formating the header: lowercase except for the first letter.")
     df.columns = [col.capitalize() for col in df.columns]
     print("✅ Header formatting fixed.")
     return df
@@ -59,31 +104,39 @@ def add_missing_header(df):
     return df
 
 def save_csv(df, output_file):
-    """Save the cleaned DataFrame to a new CSV file."""
+    print("Saving the cleaned DataFrame to a new CSV file.")
     df.to_csv(output_file, index=False)
     print(f"✅ Cleaned file saved as: {output_file}")
 
+cleaned_csv_file = None  # Global variable to store the cleaned CSV file path
+
 def main():
     """Main function to process the CSV file."""
-    file_path = uj_15min # change the CSV file path here
+    global cleaned_csv_file  # Declare the global variable
+    file_path = uj_15min  # Change the CSV file path here
 
     if not os.path.exists(file_path):
         print("❌ File not found. Please check the path.")
-        return
+        return None
 
     df = load_csv(file_path)
     if df is None:
-        return
+        return None
 
     if not check_header(df):
-        return
+        return None
 
+    df = rename_first_column_to_datetime(df)
     df = reorder_columns(df)
     df = fix_header_format(df)
     df = add_missing_header(df)
 
-    output_file = "cleaned_" + os.path.basename(file_path)
-    save_csv(df, output_file)
+    cleaned_csv_file = "cleaned_" + os.path.basename(file_path)
+    save_csv(df, cleaned_csv_file)
 
+    return cleaned_csv_file  # Return the filename so it can be used in other scripts
+
+# Allow script to be imported and executed
 if __name__ == "__main__":
+    file_path = uj_15min  # Change the file path here
     main()

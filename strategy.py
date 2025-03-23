@@ -21,7 +21,7 @@ print(data.head())
 
 # Convert the cleaned_df DataFrame to a Backtrader data feed (mandatory for cerebro engine)
 data_feed = btr.feeds.PandasData(
-    dataname=cleaned_df, 
+    dataname=cleaned_csv_file, 
     datetime=0,     
     open=1, 
     high=2, 
