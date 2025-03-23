@@ -1,7 +1,7 @@
 # Import relevant libraries and modules
 import pandas as pd
 import backtrader as btr
-from clean_data import *
+from clean_data import cleaned_csv_file
 import matplotlib as plt
 
 import quantstats as qs
@@ -19,15 +19,25 @@ data = yf.Ticker('AAPL').history(period='1y')
 print(data.head())
 '''
 
-# Convert the cleaned_df DataFrame to a Backtrader data feed (mandatory for cerebro engine)
+# Check if cleaned_csv_file is set
+if cleaned_csv_file is None:
+    raise ValueError("cleaned_csv_file is not set. Please check the clean_data.py script.")
+
+# Load the cleaned CSV file into a DataFrame
+cleaned_df = pd.read_csv(cleaned_csv_file, parse_dates=['datetime'])
+
+# Set the datetime column as the index
+cleaned_df.set_index('datetime', inplace=True)
+
+# Convert the cleaned_csv_file DataFrame to a Backtrader data feed (mandatory for cerebro engine)
 data_feed = btr.feeds.PandasData(
-    dataname=cleaned_csv_file, 
-    datetime=0,     
-    open=1, 
-    high=2, 
-    low=3, 
-    close=4, 
-    volume=5, 
+    dataname=cleaned_df, 
+    datetime=None,  # Use the index as the datetime     
+    open=0, 
+    high=1, 
+    low=2, 
+    close=3, 
+    volume=-1, # !! Change to 4 if you have volume data
     openinterest=-1
     )
 
@@ -99,6 +109,7 @@ class MyStrategy(btr.SignalStrategy):
 
 # Activate the backtrader engine
 cerebro = btr.Cerebro()
+print("Activated the backtrader engine (Cerebro)...")
 cerebro.addstrategy(MyStrategy)
 cerebro.adddata(data_feed)
 cerebro.broker.set_cash(10000)
@@ -114,6 +125,7 @@ cerebro.addanalyzer(btr.analyzers.Returns, _name = 'returns')
 cerebro.addanalyzer(btr.analyzers.SQN, _name = 'system_quality_number')
 cerebro.addanalyzer(btr.analyzers.TradeAnalyzer, _name = 'trade_analyzer')
 cerebro.addanalyzer(btr.analyzers.Transactions, _name = 'transactions')
+print("Added analyzer to the backtrader engine (Cerebro)...")
 
 # Run the backtest engine
 results = cerebro.run()
@@ -124,8 +136,16 @@ portfolio_series = pd.Series(strategy.portfolio_values, index=pd.to_datetime(cle
 # Ensure the index is properly formatted as a DatetimeIndex
 portfolio_series.index = pd.to_datetime(portfolio_series.index)
 
+# Debug: Print portfolio_series
+print("Portfolio Series:")
+print(portfolio_series)
+
 # Convert Portfolio Values to Returns
 returns_series = portfolio_series.pct_change().dropna()
+
+# Debug: Print returns_series
+print("Returns Series:")
+print(returns_series)
 
 # Verify Index Type (For Debugging)
 print(type(returns_series.index))  # Should print: <class 'pandas.core.indexes.datetimes.DatetimeIndex'>

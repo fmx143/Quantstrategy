@@ -6,7 +6,7 @@ from apy import *
 EXPECTED_COLUMNS = ["datetime", "open", "high", "low", "close"]
 
 def load_csv(file_path):
-    print("Loading the CSV file and try to detect the delimiter automatically.")
+    print("1) Loading the CSV file and try to detect the delimiter automatically.")
     try:
         df = pd.read_csv(file_path)
         return df
@@ -15,7 +15,7 @@ def load_csv(file_path):
         return None
 
 def check_header(df):
-    print("Checking if the first row contains the expected column names.")
+    print("2) Checking if the first row contains the expected column names.")
     actual_columns = list(df.columns)
     print(actual_columns)
 
@@ -63,7 +63,7 @@ def rename_first_column_to_datetime(df):
 
 def reorder_columns(df):
     """Display current column order and allow user to reorder them."""
-    print("Current column order detected:")
+    print("3) Current column order detected:")
     
     # Display original columns with their indexes
     for i, col in enumerate(df.columns):
@@ -71,7 +71,7 @@ def reorder_columns(df):
     print("\n")  # New line for better readability
 
     # Ask user for the new order
-    user_input = input("Enter the new column order as comma-separated indexes (0,1,3,2,4): ").strip()
+    user_input = input("4) Enter the new column order as comma-separated indexes (0,1,3,2,4): ").strip()
     
     try:
         new_order = [int(i) for i in user_input.split(",")]
@@ -90,8 +90,8 @@ def reorder_columns(df):
     return df
 
 def fix_header_format(df):
-    print("Formating the header: lowercase except for the first letter.")
-    df.columns = [col.capitalize() for col in df.columns]
+    print("5) Formating the header: lowercase.")
+    df.columns = [col.lower() for col in df.columns]
     print("✅ Header formatting fixed.")
     return df
 
@@ -104,15 +104,14 @@ def add_missing_header(df):
     return df
 
 def save_csv(df, output_file):
-    print("Saving the cleaned DataFrame to a new CSV file.")
+    print("6) Saving the cleaned DataFrame to a new CSV file.")
     df.to_csv(output_file, index=False)
     print(f"✅ Cleaned file saved as: {output_file}")
 
 cleaned_csv_file = None  # Global variable to store the cleaned CSV file path
 
-def main():
-    """Main function to process the CSV file."""
-    global cleaned_csv_file  # Declare the global variable
+def process_csv():
+    global cleaned_csv_file
     file_path = uj_15min  # Change the CSV file path here
 
     if not os.path.exists(file_path):
@@ -134,9 +133,7 @@ def main():
     cleaned_csv_file = "cleaned_" + os.path.basename(file_path)
     save_csv(df, cleaned_csv_file)
 
-    return cleaned_csv_file  # Return the filename so it can be used in other scripts
+    return cleaned_csv_file
 
-# Allow script to be imported and executed
-if __name__ == "__main__":
-    file_path = uj_15min  # Change the file path here
-    main()
+# Automatically process the CSV file when the script is imported
+process_csv()
