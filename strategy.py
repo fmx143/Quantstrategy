@@ -59,11 +59,7 @@ class MyStrategy(btr.SignalStrategy):
         self.bb = btr.ind.BollingerBands(self.data.close, period=self.params.bb_period, devfactor=self.params.bb_deviation)
         self.adx = btr.ind.AverageDirectionalMovementIndex(self.data, period=self.params.adx_period)
 
-        self.portfolio_values = []  # List to store portfolio values
-
-        # Track when price moves outside BB
-        self.prev_candle_outside_upper = False
-        self.prev_candle_outside_lower = False
+        self.breakout_flag = None  # will be set to 'upper' or 'lower'
 
     def next(self):
         # Price
@@ -73,7 +69,10 @@ class MyStrategy(btr.SignalStrategy):
         # Bolllinger Bands conditions
         upper_band = self.bb.lines.top[0]
         lower_band = self.bb.lines.bot[0]
+        # Only take trades if ADX > 30 (indicates a strong trend)
+        adx_filter = self.adx.adx[0] > 30
 
+        '''
         # Check if the previous candle was outside BB
         if self.data.high[-1] > self.bb.lines.top[-1] or self.data.close[-1] > self.bb.lines.top[-1]:
             self.prev_candle_outside_upper = True
@@ -83,9 +82,6 @@ class MyStrategy(btr.SignalStrategy):
         # Confirm re-entry inside BB
         sell = self.prev_candle_outside_upper and current_close < upper_band
         buy = self.prev_candle_outside_lower and current_close > lower_band
-
-        # Only take trades if ADX > 30 (indicates a strong trend)
-        adx_filter = self.adx.adx[0] > 30
 
         if self.params.pairs == "yen":
             stop_loss = self.params.stop_loss * 0.01
@@ -97,10 +93,8 @@ class MyStrategy(btr.SignalStrategy):
             stop_loss = self.params.stop_loss * 0.1
             take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.1
         else:
-            pass
-
-        # Calculate stop loss and take profit levels
-        entry_price = self.data.close[0]
+            stop_loss = self.params.stop_loss * 0.0001  # Default to USD pairs
+            take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
 
         # Buy signal: Bollinger Bands and ADX conditions are met
         if sell and adx_filter:
@@ -112,12 +106,63 @@ class MyStrategy(btr.SignalStrategy):
             self.prev_candle_outside_lower = False  # Reset flag after trade
         else:
             pass
+        '''
 
-    def notify_order(self, order):
-        # Record portfolio value after every completed order
-        if order.status in [order.Completed]:
-            self.portfolio_values.append(self.broker.getvalue())
+        # If no breakout flagged, check if previous candle broke out of the bands
+        if self.data.close[-1] > self.bb.lines.top[-1]:
+            self.breakout_flag = 'upper'
+        elif self.data.close[-1] < self.bb.lines.bot[-1]:
+            self.breakout_flag = 'lower'
+            
+        else:
+            # A breakout has occurred, now wait for re-entry inside the bands
+            if self.breakout_flag == 'upper':
+                # Price must close below the upper band for a reversal confirmation (sell signal)
+                if current_close < upper_band and adx_filter:
+                    # Calculate stop loss and take profit based on asset pair
+                    if self.params.pairs == "yen":
+                        stop_loss = self.params.stop_loss * 0.01
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.01
+                    elif self.params.pairs == "usd":
+                        stop_loss = self.params.stop_loss * 0.0001
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
+                    elif self.params.pairs == "xau":
+                        stop_loss = self.params.stop_loss * 0.1
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.1
+                    else:
+                        stop_loss = self.params.stop_loss * 0.0001  # default for USD pairs
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
 
+                    self.sell_bracket(
+                        limitprice=current_close - take_profit,
+                        stopprice=current_close + stop_loss
+                    )
+                    self.breakout_flag = None  # reset flag after trade
+
+                # If the candle hasn't re-entered, do nothing.
+            
+            elif self.breakout_flag == 'lower':
+                # Price must close above the lower band for a reversal confirmation (buy signal)
+                if current_close > lower_band and adx_filter:
+                    if self.params.pairs == "yen":
+                        stop_loss = self.params.stop_loss * 0.01
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.01
+                    elif self.params.pairs == "usd":
+                        stop_loss = self.params.stop_loss * 0.0001
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
+                    elif self.params.pairs == "xau":
+                        stop_loss = self.params.stop_loss * 0.1
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.1
+                    else:
+                        stop_loss = self.params.stop_loss * 0.0001  # default for USD pairs
+                        take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
+
+                    self.buy_bracket(
+                        limitprice=current_close + take_profit,
+                        stopprice=current_close - stop_loss
+                    )
+                    self.breakout_flag = None  # reset flag after trade
+                # Else, if still outside, remain in breakout state without trading
 
 # Activate the backtrader engine
 cerebro = btr.Cerebro()
