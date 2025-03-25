@@ -172,8 +172,5 @@ cython_debug/
 
 
 # File for API and private data
-<<<<<<< HEAD
 apy.py
-=======
-apy.py
->>>>>>> 9aa5e3bb2f2b7488784d240d0b5b875612ae4202
+
