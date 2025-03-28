@@ -72,41 +72,6 @@ class MyStrategy(btr.SignalStrategy):
         # Only take trades if ADX > 30 (indicates a strong trend)
         adx_filter = self.adx.adx[0] > 30
 
-        '''
-        # Check if the previous candle was outside BB
-        if self.data.high[-1] > self.bb.lines.top[-1] or self.data.close[-1] > self.bb.lines.top[-1]:
-            self.prev_candle_outside_upper = True
-        elif self.data.low[-1] < self.bb.lines.bot[-1]:
-            self.prev_candle_outside_lower = True
-
-        # Confirm re-entry inside BB
-        sell = self.prev_candle_outside_upper and current_close < upper_band
-        buy = self.prev_candle_outside_lower and current_close > lower_band
-
-        if self.params.pairs == "yen":
-            stop_loss = self.params.stop_loss * 0.01
-            take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.01
-        elif self.params.pairs == "usd":
-            stop_loss = self.params.stop_loss * 0.0001
-            take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
-        elif self.params.pairs == "xau":
-            stop_loss = self.params.stop_loss * 0.1
-            take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.1
-        else:
-            stop_loss = self.params.stop_loss * 0.0001  # Default to USD pairs
-            take_profit = self.params.stop_loss * self.params.risk_to_reward * 0.0001
-
-        # Buy signal: Bollinger Bands and ADX conditions are met
-        if sell and adx_filter:
-            self.sell_bracket(limitprice=current_close - take_profit, stopprice=current_close + stop_loss)
-            self.prev_candle_outside_upper = False  # Reset flag after trade
-
-        elif buy and adx_filter:
-            self.buy_bracket(limitprice=current_close + take_profit, stopprice=current_close - stop_loss)
-            self.prev_candle_outside_lower = False  # Reset flag after trade
-        else:
-            pass
-        '''
 
         # If no breakout flagged, check if previous candle broke out of the bands
         if self.data.close[-1] > self.bb.lines.top[-1]:
@@ -163,6 +128,8 @@ class MyStrategy(btr.SignalStrategy):
                     )
                     self.breakout_flag = None  # reset flag after trade
                 # Else, if still outside, remain in breakout state without trading
+
+
 
 # Activate the backtrader engine
 cerebro = btr.Cerebro()
