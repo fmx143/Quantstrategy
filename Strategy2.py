@@ -4,13 +4,20 @@ https://www.youtube.com/watch?v=XiU9JHUM5NE
 '''
 
 import backtrader as bt
+import matplotlib as plt
+import pandas as pd
+from apy import *
+
+# Usage (the data should be a Pandas DataFrame with OHLC data):
+data = pd.read_csv(Backtrader_gold_daily)  # Replace with your data source
+data['datetime'] = pd.to_datetime(data['datetime'])  # Ensure 'datetime' column is in datetime format
+data.set_index('datetime', inplace=True)  # Set the 'datetime' column as the index
+
+# Data for cerebro engine
+data_feed = bt.feeds.PandasData(dataname=data)
+
 
 class EngulfingBarStrategy(bt.Strategy):
-    params = (
-        ('cash', 10000),
-        ('commission', 0.002),  # 0.2% commission
-    )
-
     def __init__(self):
         # Keep references to the data feeds
         self.data_low = self.data.low
@@ -70,29 +77,57 @@ class EngulfingBarStrategy(bt.Strategy):
                 if cur_bar_low < self.dol:
                     self.close()  # Exit short position
 
+        print(f"Portfolio Value: {self.broker.getvalue()}")
 
-# Backtest the strategy
-if __name__ == '__main__':
-    # Create a Backtrader cerebro engine
+    def notify_trade(self, trade):
+        if trade.isclosed:
+            print(f"Trade closed: Profit: {trade.pnl}, Net Profit: {trade.pnlcomm}")
+
+
+def backtesting_strategy(mydata):
+    # Activate the backtrader engine
     cerebro = bt.Cerebro()
+    print("Activated the backtrader engine (Cerebro)...")
 
-    # Add the strategy
     cerebro.addstrategy(EngulfingBarStrategy)
+    cerebro.adddata(mydata)
 
-    # Load the data
-    data = bt.feeds.PandasData(dataname=bt.test.EURUSD)  # Replace with your own data if needed
-    cerebro.adddata(data)
+    cerebro.broker.set_cash(10000)
+    # Set the commission to 0.1% (divide by 100 to remove the %)
+    cerebro.broker.setcommission(commission=0.001)
+    # Add a PercentSizer to use 2% of account balance per trade
+    cerebro.addsizer(bt.sizers.PercentSizer, percents=2)
 
-    # Set the initial cash
-    cerebro.broker.setcash(10000)
+    # Add analyzers to the backtest
+    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name = 'sharpe_ratio')
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name = 'drawdown')
+    cerebro.addanalyzer(bt.analyzers.Returns, _name = 'returns')
+    cerebro.addanalyzer(bt.analyzers.SQN, _name = 'system_quality_number')
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name = 'trade_analyzer')
+    cerebro.addanalyzer(bt.analyzers.Transactions, _name = 'transactions')
+    print("Added analyzer to the backtrader engine (Cerebro)...")
 
-    # Set the commission
-    cerebro.broker.setcommission(commission=0.002)
+    # Run the backtest engine
+    results = cerebro.run()
 
-    # Run the backtest
-    print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
-    cerebro.run()
-    print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+    # Extract and print the results
+    sharpe_ratio = results[0].analyzers.sharpe_ratio.get_analysis() # create errors sometimes!
+    print(f"Sharpe Ratio: {sharpe_ratio.get('sharperatio', 'N/A')}")
+    drawdown = results[0].analyzers.drawdown.get_analysis()
+    print(f"Max Drawdown: {drawdown['max']['drawdown']}%")
+    returns = results[0].analyzers.returns.get_analysis()
+    print(f"Total Returns: {returns['rtot']*100}%")
+    system_quality_number = results[0].analyzers.system_quality_number.get_analysis()
+    print(f"System Quality Number (SQN): {system_quality_number['system_quality_number']}")
+    trade_analyzer = results[0].analyzers.trade_analyzer.get_analysis()
+    print(f"Total Trades: {trade_analyzer['total']['total']}")
+    print(f"Winning Trades: {trade_analyzer['won']['total']}")
+    print(f"Losing Trades: {trade_analyzer['lost']['total']}")
+    transactions = results[0].analyzers.transactions.get_analysis()
+    print(f"Total Number of Transactions: {len(transactions)}")
 
     # Plot the results
-    cerebro.plot()
+    print('Plotting the results...')
+    cerebro.plot(style='candlestick', volume=False) # Set volume to False to avoid plotting volume data and errors
+
+backtesting_strategy(data_feed)
