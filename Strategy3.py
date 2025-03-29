@@ -15,28 +15,39 @@ class EngulfingCandleStrategy(bt.Strategy):
     def __init__(self):
         self.order_block_price = None  # Placeholder for support/resistance price
 
-    def is_engulfing(self, data):
-        current_open = data.open[0]
-        current_close = data.close[0]
-        previous_open = data.open[-1]
-        previous_close = data.close[-1]
+    def engulfing(self, data):
 
-        # Bullish engulfing
-        if current_open < previous_close and current_close > previous_open:
+        '''
+        Strictly on engulfing patterne, candle 1 is the one that has to be engulfed by candle 2.
+        Candle 3 would be the candle that opens after the engulfing pattern, after candle 2 close. 
+        '''
+        candle2_open = data.open[0]
+        candle2_close = data.close[0]
+        candle2_high = data.high[0]
+        candle2_low = data.low[0]
+        candle1_open = data.open[-1]
+        candle1_close = data.close[-1]
+        candle1_high = data.open[-1]
+        candle1_low = data.low[-1]
+
+        first_candle_bullish = candle1_close > candle1_open
+        first_candle_bearish = candle1_close < candle1_open
+        candle_engulfing_bullish = first_candle_bearish and candle2_close > candle1_open and candle2_low < candle1_low
+        candle_engulfing_bearish = first_candle_bullish and candle2_close < candle1_open and candle2_high > candle1_high
+
+        if candle_engulfing_bullish:
             return 'bullish'
-
-        # Bearish engulfing
-        if current_open > previous_close and current_close < previous_open:
+        elif candle_engulfing_bearish:
             return 'bearish'
-
-        return None
+        else:
+            return None
 
     def next(self):
         current_low = self.data.low[0]
         current_high = self.data.high[0]
 
         # Check engulfing pattern
-        engulfing = self.is_engulfing(self.data)
+        engulfing = self.engulfing(self.data)
 
         if engulfing == 'bullish' and self.position.size < 0:  # If short, close and go long
             self.close()

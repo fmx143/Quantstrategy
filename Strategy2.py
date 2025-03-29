@@ -27,27 +27,27 @@ class EngulfingBarStrategy(bt.Strategy):
         self.dol = None  # Draw on Liquidity level
 
     def next(self):
-        # Previous bar values
-        prev_bar_low = self.data_low[-2]
-        prev_bar_high = self.data_high[-2]
-        prev_bar_open = self.data_open[-2]
-        prev_bar_close = self.data_close[-2]
+        '''
+        Strictly on engulfing patterne, candle 1 is the one that has to be engulfed by candle 2.
+        Candle 3 would be the candle that opens after the engulfing pattern, after candle 2 close. 
+        '''
+        candle2_open = data.open[0]
+        candle2_close = data.close[0]
+        candle2_high = data.high[0]
+        candle2_low = data.low[0]
+        candle1_open = data.open[-1]
+        candle1_close = data.close[-1]
+        candle1_high = data.open[-1]
+        candle1_low = data.low[-1]
 
-        # Current bar values
-        cur_bar_low = self.data_low[-1]
-        cur_bar_high = self.data_high[-1]
-        cur_bar_open = self.data_open[-1]
-        cur_bar_close = self.data_close[-1]
-
-        # Check for Bullish Engulfing Bar
-        is_bullish_engulfing = cur_bar_low < prev_bar_low and cur_bar_close > prev_bar_open
-
-        # Check for Bearish Engulfing Bar
-        is_bearish_engulfing = cur_bar_high > prev_bar_high and cur_bar_close < prev_bar_open
+        first_candle_bullish = candle1_close > candle1_open
+        first_candle_bearish = candle1_close < candle1_open
+        candle_engulfing_bullish = first_candle_bearish and candle2_close > candle1_open and candle2_low < candle1_low
+        candle_engulfing_bearish = first_candle_bullish and candle2_close < candle1_open and candle2_high > candle1_high
 
         # Trade Execution
         # Bullish setup
-        if is_bullish_engulfing and not self.position:
+        if bullish_engulfing and not self.position:
             # Define DOL (Draw on Liquidity)
             self.dol = cur_bar_high
             # Define the lower 50% range of the bullish engulfing bar
@@ -58,7 +58,7 @@ class EngulfingBarStrategy(bt.Strategy):
                 self.sell_stop = cur_bar_low  # Set stop-loss
 
         # Bearish setup
-        elif is_bearish_engulfing and not self.position:
+        elif bearish_engulfing and not self.position:
             # Define DOL (Draw on Liquidity)
             self.dol = cur_bar_low
             # Define the upper 50% range of the bearish engulfing bar
