@@ -1,84 +1,86 @@
 import pandas as pd
 import os
-import warnings
-from apy import *  # Assuming apy.py defines eu_15min as the CSV file path
+from apy import *
 
-# Path to the original CSV file (in your cloud)
-original_csv_path = eu_15min
+# Define the correct column order
+EXPECTED_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 
-def check_required_columns(data):
-    """
-    Checks if the CSV data has the required columns.
-    If any required columns are missing, a warning is issued.
-    """
-    required_columns = ['DateTime', 'Open', 'High', 'Low', 'Close']
-    missing = [col for col in required_columns if col not in data.columns]
-    
-    if missing:
-        warnings.warn(f"WARNING: The CSV file is missing the following required columns: {missing}")
-        return False
-    else:
-        print("All required columns are present.")
-        return True
-
-def clean_csv_data(file_path):
-    """
-    Reads the CSV file, verifies that required columns are present,
-    processes the DateTime column, and saves the cleaned data to a new file.
-    The new file is saved in the current working directory (e.g., your VS Code workspace)
-    with '_cleand' inserted before the .csv extension.
-    """
+def load_csv(file_path):
+    """Load the CSV file and try to detect the delimiter automatically."""
     try:
-        # Read CSV using tab as the separator, with no header and providing column names
-        df = pd.read_csv(file_path, sep='\t', header=None, 
-                         names=['DateTime', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        print("Preview of original data:")
-        print(df.head())
-
-        if not check_required_columns(df):
-            print("CSV file does not contain all required columns. Aborting cleaning.")
-            return None
-
-        # Process the DateTime column
-        try:
-            # Try converting to datetime directly
-            df['DateTime'] = pd.to_datetime(df['DateTime'])
-            print("DateTime column is in the correct format.")
-            df.rename(columns={'DateTime': 'datetime'}, inplace=True)
-        except Exception:
-            # Attempt to fix if DateTime is not directly convertible:
-            try:
-                df[['Date', 'Time']] = df['DateTime'].str.split(' ', expand=True)
-                df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
-                df.drop(columns=['Date', 'Time', 'DateTime'], inplace=True)
-                print("Combined Date and Time columns into a single datetime column.")
-            except Exception as e:
-                warnings.warn(f"Error processing DateTime column: {e}")
-                return None
-
-        # Reorder columns so that 'datetime' comes first
-        required_order = ['datetime', 'Open', 'High', 'Low', 'Close']
-        extra_columns = [col for col in df.columns if col not in required_order]
-        df = df[required_order + extra_columns]
-
-        # Create a new file name using the original file's base name, but saving locally
-        original_filename = os.path.basename(file_path)  # e.g., ForexSB_EURUSD_M15_06.02.2017-14.02.2025.csv
-        base, ext = os.path.splitext(original_filename)
-        new_filename = base + '_cleaned' + ext
-        # Save to current working directory (VS Code local directory)
-        new_file_path = os.path.join(os.getcwd(), new_filename)
-        
-        # Save the cleaned DataFrame to the new file
-        df.to_csv(new_file_path, index=False)
-        print("Cleaned CSV saved as:", new_file_path)
+        df = pd.read_csv(file_path)
         return df
     except Exception as e:
-        warnings.warn(f"An error occurred while processing the file: {e}")
+        print(f"❌ Error loading the file: {e}")
         return None
 
-# Call the function and process the CSV data
-cleaned_df = clean_csv_data(original_csv_path)
+def check_header(df):
+    """Check if the first row contains the expected column names."""
+    actual_columns = list(df.columns)
+    print(actual_columns)
 
-if cleaned_df is None:
-    raise ValueError("Failed to clean the CSV data. Please check the input file and try again.")
+    if actual_columns == EXPECTED_COLUMNS:
+        print("✅ The columns are already in the correct order.")
+        return True
 
+    # Check if all required columns exist
+    missing_columns = [col for col in EXPECTED_COLUMNS if col not in actual_columns]
+    if missing_columns:
+        print(f"⚠️ Warning: Missing columns: {missing_columns}")
+        user_input = input("Do you want to continue? (yes/no): ").strip().lower()
+        if user_input != "yes":
+            print("❌ Operation canceled.")
+            return False
+
+    return True
+
+def reorder_columns(df):
+    """Rearrange the columns to match the expected order."""
+    df = df.copy()  # Avoid modifying the original DataFrame
+
+    # Reorder columns by keeping the ones that exist, and adding missing ones as empty
+    reordered_df = df.reindex(columns=EXPECTED_COLUMNS)
+
+    print("✅ Columns have been reordered.")
+    return reordered_df
+
+def fix_header_format(df):
+    """Format the header: lowercase except for the first letter."""
+    df.columns = [col.capitalize() for col in df.columns]
+    print("✅ Header formatting fixed.")
+    return df
+
+def add_missing_header(df):
+    """If the first row looks like data (only numbers), add the correct header."""
+    if not all(isinstance(col, str) for col in df.columns):  # If columns are numbers
+        df.columns = EXPECTED_COLUMNS  # Set the correct header
+        print("✅ Header was missing and has been added.")
+
+    return df
+
+def save_csv(df, output_file):
+    """Save the cleaned DataFrame to a new CSV file."""
+    df.to_csv(output_file, index=False)
+    print(f"✅ Cleaned file saved as: {output_file}")
+
+def main():
+    """Main function to process the CSV file."""
+    file_path = input(uj_15min).strip() # change the CSV file path here
+
+    if not os.path.exists(file_path):
+        print("❌ File not found. Please check the path.")
+        return
+
+    df = load_csv(file_path)
+    if df is None:
+        return
+
+    if not check_header(df):
+        return
+
+    df = reorder_columns(df)
+    df = fix_header_format(df)
+    df = add_missing_header(df)
+
+    output_file = "cleaned_" + os.path.basename(file_path)
+    save_csv(df, output_file)
