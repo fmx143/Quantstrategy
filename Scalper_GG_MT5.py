@@ -17,57 +17,75 @@ import pandas as pd
 import datetime
 import math
 import time
+from apy import *
+
+# display data on the MetaTrader 5 package
+print("MetaTrader5 package author: ",mt5.__author__)
+print("MetaTrader5 package version: ",mt5.__version__)
 
 
-# ***** Global Parameters (converted from extern/input parameters) *****
-mn = "Scalper-GG-14"
-lot = None
-shifthighrecent = 5
-shiftlowrecent = 2
-shifthigh = 5
-shiftlow = 7
-trail_enabled = True
-TrailingStop = 2
-barnumber = 24
-barnumberrecent = 33
-MagicNumber = 14072020
-atrMultiple = 3
-TrailingStart = 21
-volume1 = 1
-volume0 = 0
-adxperiod = 31
-adxthreshold = 23
-rsiperiod = 21
-rsilower = 48
-rsiupper = 80
-Slippage = 3
-Indicatorperiod = 14
-MaxSpreadAllow = 10      # Maximum allowed spread
-LotFactor = 60           # Lot size factor
-ecartask = 2
-ecartbid = 10
-Start_Time = 0           # Trading start hour (0 disables time filtering)
-Finish_Time = 0          # Trading finish hour (0 disables time filtering)
-bidbid = 600
-askask = 300
-AddPriceGap = 1
-MinPipsToModify = 1
 
+''' ***** Global Parameters (converted from extern/input parameters)
+These parameters define the behavior of the trading strategy and can be adjusted as needed.'''
+mn = "Scalper-GG-14"  # Name of the expert advisor
+lot = None  # Lot size (calculated dynamically based on account equity)
+shifthighrecent = 5  # Shift for recent high calculation
+shiftlowrecent = 2  # Shift for recent low calculation
+shifthigh = 5  # Shift for longer-period high calculation
+shiftlow = 7  # Shift for longer-period low calculation
+trail_enabled = True  # Enable/disable trailing stop functionality
+TrailingStop = 2  # Trailing stop distance in points
+barnumber = 24  # Number of bars for longer-period high/low calculation
+barnumberrecent = 33  # Number of bars for recent high/low calculation
+MagicNumber = 14072020  # Unique identifier for orders placed by this EA
+atrMultiple = 3  # Multiplier for ATR-based stop loss
+TrailingStart = 21  # Minimum price movement (in points) before trailing stop activates
+volume1 = 1  # Volume index for recent bar
+volume0 = 0  # Volume index for older bar
+adxperiod = 31  # Period for ADX indicator
+adxthreshold = 23  # Threshold for ADX indicator to confirm trend strength
+rsiperiod = 21  # Period for RSI indicator
+rsilower = 48  # Lower threshold for RSI (oversold level)
+rsiupper = 80  # Upper threshold for RSI (overbought level)
+Slippage = 3  # Maximum allowed slippage in points
+Indicatorperiod = 14  # Period for moving average and other indicators
+MaxSpreadAllow = 10  # Maximum allowed spread (in points) for placing orders
+LotFactor = 60  # Factor for calculating lot size based on account equity
+ecartask = 2  # Offset (in points) for placing buy stop orders
+ecartbid = 10  # Offset (in points) for placing sell stop orders
+Start_Time = 0  # Trading start hour (0 disables time filtering)
+Finish_Time = 0  # Trading finish hour (0 disables time filtering)
+bidbid = 600  # Offset for sell order conditions
+askask = 300  # Offset for buy order conditions
+AddPriceGap = 1  # Additional price gap for stop loss/take profit
+MinPipsToModify = 1  # Minimum pips to modify stop loss/take profit
 
 # ***** Connection and symbol initialization *****
-symbol = "EURUSD"  # Change as necessary
-
-
-# Attempt connection to MetaTrader5
-if not mt5.initialize():
+# Establish connection to the MetaTrader 5 terminal
+if not mt5.initialize(login=ic_login , password=ic_pwd , server=ic_server):
     print("initialize() failed, error code =", mt5.last_error())
     quit()
 
-account_info = mt5.account_info()
-if account_info is None:
-    print("Failed to get account info")
-else:
-    print(f"Connected to account: {account_info.login}, Balance: {account_info.balance}")
+# display data on MetaTrader 5 version and account informations
+mt5_version=mt5.version()
+mt5_account=mt5.account_info()
+print("MetaTrader 5 version: ",mt5_version)
+print("Account number: ",mt5_account.login)
+print("Account balance: ",mt5_account.balance)
+print("Account equity: ",mt5_account.equity)
+
+# get all symbols
+symbols=mt5.symbols_get()
+print('Symbols: ', len(symbols))
+count=0
+# display the first five ones
+for s in symbols:
+    count+=1
+    print("{}. {}".format(count,s.name))
+    if count==5: break
+print()
+
+symbol = "EURUSD"  # Trading symbol (e.g., EURUSD). Change as necessary.
 
 # Make sure that the symbol is available
 symbol_info = mt5.symbol_info(symbol)
@@ -83,6 +101,31 @@ else:
             quit()
     print(f"Symbol {symbol} is available and ready for trading.")
 
+
+# shut down connection to the MetaTrader 5 terminal
+# mt5.shutdown()
+
+
+''' ***** Trading Strategy Overview *****
+# The strategy uses technical indicators (ADX, RSI, ATR, and moving averages) to identify trading opportunities.
+# It places pending buy or sell stop orders based on price levels calculated from recent highs/lows and moving averages.
+# The strategy includes:
+# - Dynamic lot size calculation based on account equity.
+# - ATR-based stop loss and take profit levels.
+# - Trailing stop functionality to lock in profits as the trade moves in favor.
+# - Time filtering to restrict trading to specific hours (if enabled).
+# - Spread filtering to avoid trading during high-spread conditions.
+# - Booster logic to confirm trade signals using volume and indicator thresholds.
+
+# The rest of the code implements helper functions, indicator calculations, and the main trading logic. '''
+
+symbol_info = mt5.symbol_info(symbol)
+print(f"📄Symbol info for {symbol}: {symbol_info}")
+symbol_price = mt5.symbol_info_tick(symbol)
+print(f"💸Symbol price for {symbol}: {symbol_price}")
+
+
+
 # ***** Helper functions for indicator calculations *****
 def get_rates(timeframe=mt5.TIMEFRAME_M1, count=500):
     """
@@ -93,6 +136,7 @@ def get_rates(timeframe=mt5.TIMEFRAME_M1, count=500):
         print("Failed to get rates data")
         return None
     
+    # Convert the rates data into a Pandas DataFrame for easier manipulatio
     df = pd.DataFrame(rates)
     df['time'] = pd.to_datetime(df['time'], unit='s')
     return df
@@ -102,13 +146,13 @@ def iADX(df, period, price='close'):
     # talib.ADX requires high, low and close arrays
     if len(df) < period + 1:
         print(f"Not enough data points for ADX calculation. Need at least {period + 1}, got {len(df)}")
-        return np.zeros(len(df))
+        return np.zeros(len(df)) # Return an array of zeros if not enough data
     
     try:
         return talib.ADX(df['high'].values, df['low'].values, df['close'].values, timeperiod=period)
     except Exception as e:
         print(f"Error calculating ADX: {e}")
-        return np.zeros(len(df))
+        return np.zeros(len(df)) # Return an array of zeros in case of an error
 
 
 def iRSI(df, period, price='close'):
@@ -130,6 +174,7 @@ def iMA(df, period, matype=0, price='close'):
         return np.zeros(len(df))
     
     try:
+        # Calculate the moving average using the specified type and price
         return talib.MA(df[price].values, timeperiod=period, matype=matype)
     except Exception as e:
         print(f"Error calculating MA: {e}")
@@ -142,6 +187,7 @@ def iATR(df, period):
         return np.zeros(len(df))
     
     try:
+        # Calculate ATR using high, low, and close prices
         return talib.ATR(df['high'].values, df['low'].values, df['close'].values, timeperiod=period)
     except Exception as e:
         print(f"Error calculating ATR: {e}")
@@ -307,7 +353,7 @@ def trail():
         # Calculate minimal pips modification factor (in points)
         MPTM = MinPipsToModify * 10 * symbol_info.point
         
-        tick = mt5.symbol_info_tick(symbol)
+        tick = mt5.symbol_info(symbol)
         if tick is None:
             print("Failed to get current price tick")
             return
@@ -380,7 +426,7 @@ def start():
             MyPoint *= 10
 
         # Get the current spread, ask, bid
-        tick = mt5.symbol_info_tick(symbol)
+        tick = mt5.symbol_info(symbol)
         if tick is None:
             print("Failed to get current price tick")
             return

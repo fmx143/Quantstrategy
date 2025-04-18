@@ -23,3 +23,8 @@ ej_15min = r"C:\Users\loick\OneDrive\VS Code\Forex Historical Data\EURJPY-2000-2
 ucad_15min = r"C:\Users\loick\OneDrive\VS Code\Forex Historical Data\USDCAD-2000-2020-15m.csv"
 uchf_15min = r"C:\Users\loick\OneDrive\VS Code\Forex Historical Data\USDCHF-2000-2020-15m.csv"
 uj_15min = r"C:\Users\loick\OneDrive\VS Code\Forex Historical Data\USDJPY-2000-2020-15m.csv"
+
+# IC Market demo account login
+ic_login = 52278080
+ic_pwd = "T@95L$1c3k4cpD"
+ic_server = "ICMarketsSC-Demo"
