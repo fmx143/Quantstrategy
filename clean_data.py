@@ -112,7 +112,7 @@ cleaned_csv_file = None  # Global variable to store the cleaned CSV file path
 
 def process_csv():
     global cleaned_csv_file
-    file_path = gold_daily  # Change the CSV file path here
+    file_path = eu_15min  # Change the CSV file path here
 
     if not os.path.exists(file_path):
         print("❌ File not found. Please check the path.")
