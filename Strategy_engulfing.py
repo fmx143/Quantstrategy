@@ -8,7 +8,10 @@ import pandas as pd
 from apy import *
 
 # Usage (the data should be a Pandas DataFrame with OHLC data):
-data = pd.read_csv(eu_daily_clean)  # Replace with your data source
+data = pd.read_csv(r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_Daily_5y_cleaned.csv')
+data['Datetime'] = pd.to_datetime(data['Datetime'])
+data.set_index('Datetime', inplace=True)
+# Replace with your data source
 
 
 class EngulfingCandleStrategy(bt.Strategy):
@@ -49,12 +52,19 @@ class EngulfingCandleStrategy(bt.Strategy):
         # Check engulfing pattern
         engulfing = self.engulfing(self.data)
 
-        if engulfing == 'bullish' and self.position.size < 0:  # If short, close and go long
-            self.close()
-            self.buy(size=1, exectype=bt.Order.Market, price=current_low)
-        elif engulfing == 'bearish' and self.position.size > 0:  # If long, close and go short
-            self.close()
-            self.sell(size=1, exectype=bt.Order.Market, price=current_high)
+        if engulfing == 'bullish':  # Open a new long position
+            entry_price = self.data.close[0]
+            stop_loss = max(entry_price - 0.0015, current_low)  # Minimum 15 pips or below the current low
+            take_profit = entry_price + (3 * (entry_price - stop_loss))  # RR of 1:3
+            self.buy(exectype=bt.Order.Market, price=entry_price, take_profit=take_profit, stop_loss=stop_loss)
+
+
+        elif engulfing == 'bearish':  # Open a new short position
+            entry_price = self.data.close[0]
+            stop_loss = min(entry_price + 0.0015, current_high)  # Minimum 15 pips or above the current high
+            take_profit = entry_price - 3 * (stop_loss - entry_price)  # RR of 1:3
+            self.sell(exectype=bt.Order.Market, price=entry_price, take_profit=take_profit, stop_loss=stop_loss)
+
 
     def stop(self):
         # Implement any additional stop logic here if needed
@@ -69,8 +79,8 @@ def backtest_strategy(data, cash=10000, commission=0.002):
     cerebro.broker.set_cash(10000)
     # Set the commission to 0.1% (divide by 100 to remove the %)
     cerebro.broker.setcommission(commission=0.001)
-    # Add a PercentSizer to use 2% of account balance per trade
-    cerebro.addsizer(bt.sizers.PercentSizer, percents=2)
+    # Add a PercentSizer to use 1% of account balance per trade
+    cerebro.addsizer(bt.sizers.PercentSizer, percents=1)
 
     # Add the data feed
     data_feed = bt.feeds.PandasData(dataname=data)
@@ -88,6 +98,12 @@ def backtest_strategy(data, cash=10000, commission=0.002):
     print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
 
     # Plot the results
-    cerebro.plot()
+    cerebro.plot(style='candlestick', barup='green', bardown='red', barupcolor='green', bardowncolor='red')
 
 backtest_strategy(data)
+
+''' ------------------------------
+Not profitable at this time, at all. 
+Lost 50% of the account
+
+'''
