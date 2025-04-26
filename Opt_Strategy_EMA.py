@@ -52,6 +52,7 @@ INITIAL_CAPITAL = 10000
 COMMISSION_PCT = 0.0  # Example: 0.05% per trade (adjust as needed)
 PIP_VALUE_EURUSD = 0.0001
 DATA_FREQUENCY = '4H' # Important for performance calculations
+MIN_TRADES = 10 # Minimum number of trades required for a valid trial
 
 def run_backtest(close_prices, params):
     """
@@ -86,7 +87,7 @@ def run_backtest(close_prices, params):
     sl_amount = fixed_sl_pips * PIP_VALUE_EURUSD
     # Ensure no division by zero if close_prices can be zero (unlikely for FX)
     close_prices_safe = close_prices.replace(0, np.nan) # Replace 0 with NaN temporarily
-    sl_stop_pct = (sl_amount / close_prices_safe).fillna(0) # Calculate pct, fill NaN results with 0
+    sl_stop_pct = (sl_amount / close_prices_safe).fillna(method='ffill').fillna(0) # Forward fill to handle potential NaNs at start
     tp_stop_pct = sl_stop_pct * reward_ratio
 
     # Calculate SL percentage relative to the closing price *at each point*
@@ -119,26 +120,25 @@ def run_backtest(close_prices, params):
 
 def objective(trial):
     """
-    Objective function for Optuna to optimize.
-    Takes an Optuna trial object, suggests parameters, runs the backtest,
-    and returns a performance metric.
+    Objective function for Optuna MULTI-OBJECTIVE optimization.
+    Suggests parameters, runs backtest, and returns multiple performance metrics.
     """
     # --- Suggest Parameters ---
-    # Use integers for periods
-    ema_fast = trial.suggest_int('ema_fast', 1, 15) # Example range
-    ema_mid = trial.suggest_int('ema_mid', 40, 60) # Example range
-    ema_slow = trial.suggest_int('ema_slow', 150, 200) # Example range
+    ema_fast = trial.suggest_int('ema_fast', 5, 50)    # Wider range start
+    ema_mid = trial.suggest_int('ema_mid', 20, 100)   # Wider range start
+    ema_slow = trial.suggest_int('ema_slow', 100, 250) # Wider range start
 
-    # Ensure fast < mid < slow logic
+    # Ensure fast < mid < slow logic more efficiently
+    # Adjust mid based on fast, and slow based on mid
+    ema_mid = trial.suggest_int('ema_mid', ema_fast + 10, 150) # Ensure mid > fast + reasonable gap
+    ema_slow = trial.suggest_int('ema_slow', ema_mid + 50, 300) # Ensure slow > mid + reasonable gap
+
+    # Prune explicitly if constraint is somehow violated (shouldn't be with new suggestions)
     if not (ema_fast < ema_mid < ema_slow):
-         # Prune this trial if condition not met
-         raise optuna.exceptions.TrialPruned()
+         raise optuna.exceptions.TrialPruned("EMA order constraint violated.")
 
-    # Use integers for pips
-    fixed_sl = trial.suggest_int('fixed_sl', 5, 25) # Example range
-
-    # Use float for ratio
-    reward_ratio = trial.suggest_float('reward_ratio', 1.0, 4.0, step=0.1) # Example range
+    fixed_sl = trial.suggest_int('fixed_sl', 5, 50) # Pips
+    reward_ratio = trial.suggest_float('reward_ratio', 0.5, 5.0, step=0.1)
 
     params = {
         'ema_fast': ema_fast,
@@ -151,33 +151,26 @@ def objective(trial):
     # --- Run Backtest ---
     portfolio = run_backtest(close_prices, params)
 
-    # --- Return Metric ---
-    if portfolio is None or portfolio.trades.count() == 0:
-        # Penalize trials with errors or no trades (return a very low value)
-        raise optuna.exceptions.TrialPruned("No trades executed or error in backtest.")
-        return -1.0 # Return low value for maximization
+    # --- Calculate Metrics & Handle Invalid Trials ---
+    if portfolio is None or portfolio.trades.count() < MIN_TRADES:
+        # Prune trials with errors, or too few trades for metrics to be meaningful
+        raise optuna.exceptions.TrialPruned(f"Error, or fewer than {MIN_TRADES} trades executed.")
 
-    # --- Choose Metric to Optimize ---
-    # Example: Total Return (can be negative)
-    metric = portfolio.total_return()
+    # Calculate Sharpe Ratio (maximize)
+    sharpe = portfolio.sharpe_ratio()
+    sharpe = sharpe if np.isfinite(sharpe) else -1.0 # Penalize non-finite Sharpe
 
-    # Alternative: Sharpe Ratio (handle potential NaN/inf)
-    # sharpe = portfolio.sharpe_ratio()
-    # metric = sharpe if np.isfinite(sharpe) else -1.0
+    # Calculate Win Rate (maximize)
+    win_rate = portfolio.trades.win_rate() # win_rate is typically between 0 and 100
+    win_rate = win_rate if np.isfinite(win_rate) else 0.0 # Penalize non-finite Win Rate
 
-    # Alternative: Sortino Ratio
-    # sortino = portfolio.sortino_ratio()
-    # metric = sortino if np.isfinite(sortino) else -1.0
+    # Calculate Max Drawdown (maximize - since it's negative, maximizing brings it closer to 0)
+    max_drawdown = portfolio.max_drawdown() # max_drawdown is typically negative (e.g., -0.1 for -10%)
+    max_drawdown = max_drawdown if np.isfinite(max_drawdown) else -1.0 # Penalize non-finite Drawdown
 
-    # Alternative: SQN (System Quality Number) - May require portfolio.trades access
-    # try:
-    #     sqn = portfolio.sqn() # Check if this method exists or calculate manually
-    #     metric = sqn if np.isfinite(sqn) else -1.0
-    # except AttributeError:
-    #     metric = portfolio.total_return() # Fallback
-
-    # Ensure metric is float
-    return float(metric)
+    # --- Return Multiple Metrics ---
+    # Ensure all returned values are floats
+    return float(sharpe), float(win_rate), float(max_drawdown)
 
 
 ''' ------------------------------
@@ -192,72 +185,118 @@ if __name__ == '__main__':
         study_name = 'Opt_Strategy_EMA_vbt_eurusd_4h' # Unique name for the study
         storage_name = f"sqlite:///{study_name}.db"
 
+        # Define the directions for each objective (must match the order returned by the objective function)
+        # Maximize Sharpe, Maximize Win Rate, Maximize Max Drawdown (closer to 0)
+        direction = ['maximize', 'maximize', 'maximize']
+
         study = optuna.create_study(
             study_name=study_name,
             storage=storage_name,
             load_if_exists=True,  # Load previous results if study exists
-            direction='maximize'  # Maximize the metric returned by objective
+            directions=direction # Specify multi-objective directions
         )
 
         # --- Run Optimization ---
-        n_trials = 100 # Number of optimization trials to run
-        print(f"🚀 Starting Optimization for {n_trials} trials...")
+        n_trials = 1000 # Adjust number of trials as needed
+        print(f"🚀 Starting Multi-Objective Optimization for {n_trials} trials...")
+        print(f"   Objectives: Sharpe Ratio (max), Win Rate (max), Max Drawdown (max -> min magnitude)")
         print(f"   Study Name: {study_name}")
         print(f"   Storage: {storage_name}")
-        print("   Run 'optuna-dashboard sqlite:///Opt_Strategy_EMA_vbt_eurusd_4h' in your terminal to view progress.")
+        print(f"   Run 'optuna-dashboard {storage_name}' in your terminal to view progress.")
 
         try:
             study.optimize(
                 objective,
                 n_trials=n_trials,
-                # n_jobs=-1 # Use all available CPU cores for parallel execution
-                # Note: Parallelization with vectorbt might not always yield linear speedups
-                # depending on the strategy complexity and data size. Test with n_jobs=1 first.
+                # n_jobs=-1 # Consider uncommenting for parallel execution, test performance
+                gc_after_trial=True # Helps manage memory with vectorbt/pandas
             )
         except KeyboardInterrupt:
             print("\n🛑 Optimization interrupted by user.")
         except Exception as e:
-             print(f"\n❌ An error occurred during optimization: {e}")
-             import traceback
-             traceback.print_exc()
+            print(f"\n❌ An error occurred during optimization: {e}")
+            import traceback
+            traceback.print_exc()
 
 
         # --- Analyze and Display Results ---
         print('\n🏁 Optimization Finished.')
         print(f"Number of finished trials: {len(study.trials)}")
 
-        best_trial = study.best_trial
-        print("\n--- Best Trial ---")
-        print(f"  Value (Metric): {best_trial.value:.6f}")
-        print("  Params: ")
-        for key, value in best_trial.params.items():
-            print(f"    {key}: {value}")
+        '''
+        In multi-objective optimization, there isn't a single "best" trial,
+        but rather a set of "Pareto optimal" solutions.
+        A solution is Pareto optimal if no objective can be improved
+        without worsening at least one other objective.
+        '''
+        pareto_trials = study.best_trials
 
-        # --- Run Backtest with Best Parameters ---
-        print("\n--- Running backtest with best parameters ---")
-        best_params = best_trial.params
-        # Need to handle the pruning constraint again if loading best params
-        if not (best_params['ema_fast'] < best_params['ema_mid'] < best_params['ema_slow']):
-             print("Warning: Best parameters found violate fast < mid < slow constraint. This shouldn't happen if pruning worked.")
+        print(f"\n--- Pareto Optimal Trials ({len(pareto_trials)}) ---")
+        if not pareto_trials:
+             print("No optimal trials found (perhaps all were pruned or encountered errors).")
         else:
-            final_portfolio = run_backtest(close_prices, best_params)
+            print("Showing results for Pareto optimal trials (trade-offs between objectives):")
+            print("-" * 80)
+            print(f"{'Trial':>5} | {'Sharpe':>10} | {'Win Rate':>10} | {'Max DD':>10} | {'Params':<40}")
+            print("-" * 80)
+            for i, trial in enumerate(pareto_trials):
+                params_str = ', '.join(f"{k}={v}" for k, v in trial.params.items())
+                print(f"{trial.number:>5} | {trial.values[0]:>10.4f} | {trial.values[1]:>10.2f} | {trial.values[2]:>10.4f} | {params_str}")
+            print("-" * 80)
 
-            if final_portfolio is not None:
-                print("\n--- Performance Metrics (Best Parameters) ---")
-                print(final_portfolio.stats())
+            # --- Optional: Find and display the trial that was best for EACH objective individually ---
+            print("\n--- Trials with highest individual metrics (among all completed trials) ---")
 
-                # Plotting (optional, requires plotly installed)
-                try:
-                    fig = final_portfolio.plot()
-                    fig.show()
-                except Exception as plot_err:
-                    print(f"Plotting failed: {plot_err}")
+            completed_trials_df = study.trials_dataframe(multi_index=False) # Get results as DataFrame
+            completed_trials_df = completed_trials_df[completed_trials_df['state'] == 'COMPLETE'] # Filter for completed trials
+
+            if not completed_trials_df.empty:
+                 # Need to rename columns as Optuna >= 3.0 names them values_0, values_1, etc.
+                 completed_trials_df.rename(columns={'values_0': 'sharpe', 'values_1': 'win_rate', 'values_2': 'max_drawdown'}, inplace=True)
+
+                 # Find best Sharpe
+                 best_sharpe_trial_num = completed_trials_df.loc[completed_trials_df['sharpe'].idxmax()]['number']
+                 best_sharpe_trial = study.trials[best_sharpe_trial_num]
+                 print(f"\nBest Sharpe Ratio Trial (#{best_sharpe_trial.number}):")
+                 print(f"  Metrics: Sharpe={best_sharpe_trial.values[0]:.4f}, WinRate={best_sharpe_trial.values[1]:.2f}, MaxDD={best_sharpe_trial.values[2]:.4f}")
+                 print(f"  Params: {best_sharpe_trial.params}")
+
+                 # Find best Win Rate
+                 best_winrate_trial_num = completed_trials_df.loc[completed_trials_df['win_rate'].idxmax()]['number']
+                 best_winrate_trial = study.trials[best_winrate_trial_num]
+                 print(f"\nBest Win Rate Trial (#{best_winrate_trial.number}):")
+                 print(f"  Metrics: Sharpe={best_winrate_trial.values[0]:.4f}, WinRate={best_winrate_trial.values[1]:.2f}, MaxDD={best_winrate_trial.values[2]:.4f}")
+                 print(f"  Params: {best_winrate_trial.params}")
+
+                 # Find best Max Drawdown (highest value, i.e., closest to zero)
+                 best_drawdown_trial_num = completed_trials_df.loc[completed_trials_df['max_drawdown'].idxmax()]['number']
+                 best_drawdown_trial = study.trials[best_drawdown_trial_num]
+                 print(f"\nBest Max Drawdown Trial (#{best_drawdown_trial.number}):")
+                 print(f"  Metrics: Sharpe={best_drawdown_trial.values[0]:.4f}, WinRate={best_drawdown_trial.values[1]:.2f}, MaxDD={best_drawdown_trial.values[2]:.4f}")
+                 print(f"  Params: {best_drawdown_trial.params}")
+
+                 # --- Optional: Run backtest with one of the best trials (e.g., best Sharpe) ---
+                 print("\n--- Running backtest with the 'Best Sharpe Ratio' parameters ---")
+                 final_portfolio = run_backtest(close_prices, best_sharpe_trial.params)
+                 if final_portfolio is not None:
+                    print("\n--- Performance Metrics (Best Sharpe Params) ---")
+                    print(final_portfolio.stats())
+                    # Plotting (optional)
+                    try:
+                        fig = final_portfolio.plot()
+                        fig.show()
+                    except Exception as plot_err:
+                        print(f"Plotting failed: {plot_err}")
+                 else:
+                    print("Could not run final backtest with best Sharpe parameters.")
+
             else:
-                print("Could not run final backtest with best parameters.")
+                 print("No completed trials found to determine individual bests.")
+
 
         # --- Optuna Dashboard Reminder ---
         print("\n--- Optuna Dashboard ---")
-        print("To visualize the optimization study, run the following command in your terminal:")
+        print("To visualize the multi-objective optimization study (Pareto front), run:")
         print(f"optuna-dashboard {storage_name}")
 
     else:
