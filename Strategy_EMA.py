@@ -1,194 +1,228 @@
 import backtrader as bt
 import pandas as pd
-
+import numpy as np # Import numpy if not already
 
 ''' ------------------------------
-Part 1, import data
-'''
-# Data usage (the data should be a Pandas DataFrame with OHLC data):
+Part 1, import data (Keep as is)
+------------------------------ '''
 try:
-    data = pd.read_csv(r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_4H_5y_cleaned.csv')
-    data['Datetime'] = pd.to_datetime(data['Datetime'])
-    data.set_index('Datetime', inplace=True)
-    print("1) Data loaded successfully.")
-
+    # Using the 4H data as specified in the original request
+    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_4H_5y_cleaned.csv'
+    price_df = pd.read_csv(data_path)
+    price_df['Datetime'] = pd.to_datetime(price_df['Datetime'])
+    price_df.set_index('Datetime', inplace=True)
+    price_df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+    price_df.sort_index(inplace=True)
+    print(f"1) Data loaded successfully. Shape: {price_df.shape}")
 except FileNotFoundError:
-    print("1.1) Error: Data file not found. Please check the path.")
-    exit() # Exit if data can't be loaded
+    print(f"1.1) Error: Data file not found at {data_path}. Please check the path.")
+    exit()
 except Exception as e:
     print(f"An error occurred loading the data: {e}")
     exit()
 
 
 ''' ------------------------------
-Part 2, define the strategy, indicators, and entry/exit conditions
-'''
+Part 2, define the strategy (MODIFIED)
+------------------------------ '''
 class EmaCrossoverStrategy(bt.Strategy):
+    # Parameters will be passed during instantiation
     params = (
-        ('ema_fast', 10),       # Fast EMA period (will be optimized)
-        ('ema_mid', 50),        # Mid EMA period (will be optimized)
-        ('ema_slow', 200),      # Slow EMA period (will be optimized)
-        ('reward_ratio', 3.0),  # Reward-to-risk ratio (will be optimized)
-        ('fixed_sl', 20),       # Stop-loss in pips (will be optimized)
+        ('ema_fast', None),      # Required: Period for fast EMA
+        ('ema_mid', None),       # Required: Period for mid EMA
+        ('ema_slow', None),      # Required: Period for slow EMA
+        ('reward_ratio', None),  # Required: Reward:Risk ratio for TP
+        ('fixed_sl', None),      # Required: Stop-loss in pips
+        ('pip_value', 0.0001),   # Pip size for EUR/USD
     )
 
     def __init__(self):
-        # Define EMAs
+        # Validate parameters
+        if None in [self.p.ema_fast, self.p.ema_mid, self.p.ema_slow, self.p.reward_ratio, self.p.fixed_sl]:
+            raise ValueError("Strategy parameters (ema_fast, ema_mid, ema_slow, reward_ratio, fixed_sl) must be provided.")
+
+        # Define indicators
         self.ema_fast = bt.ind.EMA(self.data.close, period=self.p.ema_fast)
         self.ema_mid = bt.ind.EMA(self.data.close, period=self.p.ema_mid)
         self.ema_slow = bt.ind.EMA(self.data.close, period=self.p.ema_slow)
-
-        # Crossovers conditions
         self.cross_fast_mid = bt.ind.CrossOver(self.ema_fast, self.ema_mid)
 
-        # Track orders (stats will be collected by analyzers)
+        # Track orders to prevent multiple orders before fill
         self.order = None
 
     def market_condition_buy(self):
-        """Check if the market condition is suitable for a buy."""
+        # Market Trend Filter: Fast > Mid > Slow EMA
         return self.ema_fast[0] > self.ema_mid[0] and self.ema_mid[0] > self.ema_slow[0]
 
     def market_condition_sell(self):
-        """Check if the market condition is suitable for a sell."""
+        # Market Trend Filter: Fast < Mid < Slow EMA
         return self.ema_fast[0] < self.ema_mid[0] and self.ema_mid[0] < self.ema_slow[0]
 
     def next(self):
-        # If an order is pending, skip
-        if self.order:
+        # If an order is pending or we are already in the market, do nothing
+        if self.order or self.position:
             return
 
-        # Check if we are in the market
-        if not self.position:
-            # Calculate stop loss distance in price terms
-            sl_pips = self.p.fixed_sl
-            # Assuming EURUSD or similar pair where pip value is 0.0001
-            # considers the quote currency and pair type (e.g., USDJPY).
-            pip_value = 0.0001
-            sl_amount = sl_pips * pip_value
+        # Calculate SL and TP amounts in price terms
+        sl_pips = self.p.fixed_sl
+        pip_value = self.p.pip_value
+        sl_amount = sl_pips * pip_value
 
-            # --- Entry conditions: ---
-            # 1) Fast EMA crosses above Mid EMA and both are above Slow EMA
-            if self.cross_fast_mid[0] > 0 and self.market_condition_buy():
-                buy_price = self.data.close[0]
-                buy_stop_loss_price = buy_price - sl_amount
-                buy_take_profit_price = buy_price + (buy_price - buy_stop_loss_price) * self.p.reward_ratio # Needs reward_ratio param
+        # Ensure reward_ratio is positive before calculating TP
+        if self.p.reward_ratio <= 0:
+             tp_amount = float('inf') # Effectively disable TP if ratio is non-positive
+        else:
+             tp_amount = sl_amount * self.p.reward_ratio
 
-                # Place buy order (stop loss handled by exit logic below for simplicity now)
-                # Using buy_bracket directly might be complex if TP is also dynamic or based on exits.
-                self.order = self.buy()
-                self.sl_price = buy_stop_loss_price
-                self.tp_price = buy_take_profit_price
+        current_close = self.data.close[0] # Use current close as reference for SL/TP calculation
+
+        # --- Entry conditions with Bracket Orders ---
+        # Buy Signal: Fast crosses above Mid AND trend filter is bullish
+        if self.cross_fast_mid[0] > 0 and self.market_condition_buy():
+            sl_price = current_close - sl_amount
+            tp_price = current_close + tp_amount
+            # Place Market Order with attached SL and TP
+            self.order = self.buy_bracket(
+                stopprice=sl_price,
+                limitprice=tp_price,
+                exectype=bt.Order.Market # Execute at market on next bar open
+            )
+            # print(f"[{self.data.datetime.date(0)}] BUY Bracket Sent: Entry Ref={current_close:.5f}, SL={sl_price:.5f}, TP={tp_price:.5f}")
 
 
-            # 2) Fast EMA crosses below Mid EMA and both are below Slow EMA
-            elif self.cross_fast_mid[0] < 0 and self.market_condition_sell():
-                sell_price = self.data.close[0]
-                sell_stop_loss_price = sell_price + sl_amount
-                sell_take_profit_price = sell_price - (sell_stop_loss_price - sell_price) * self.p.reward_ratio # Needs reward_ratio param
-
-                # Place sell order
-                self.order = self.sell()
-                self.sl_price = sell_stop_loss_price
-                self.tp_price = sell_take_profit_price
-
-        else: # We are in the market, check exit conditions
-            current_price = self.data.close[0]
-
-            # --- Exit conditions: ---
-            if self.position.size > 0: # Long position
-                # 1. Fixed Stop Loss Hit
-                if current_price <= self.sl_price:
-                    self.order = self.close()
-                elif current_price >= self.tp_price:
-                    self.order = self.close()
-                # 3. Exit on crossover back
-                elif self.cross_fast_mid[0] < 0:
-                    self.order = self.close()
-
-            elif self.position.size < 0: # Short position
-                # 1. Fixed Stop Loss Hit
-                if current_price >= self.sl_price:
-                    self.order = self.close()
-                # 2. Optional: Take Profit Hit (if defined)
-                elif current_price <= self.tp_price:
-                    self.order = self.close()
-                # 3. Exit on crossover back
-                elif self.cross_fast_mid[0] > 0:
-                    self.order = self.close()
+        # Sell Signal: Fast crosses below Mid AND trend filter is bearish
+        elif self.cross_fast_mid[0] < 0 and self.market_condition_sell():
+            sl_price = current_close + sl_amount
+            tp_price = current_close - tp_amount
+            # Place Market Order with attached SL and TP
+            self.order = self.sell_bracket(
+                stopprice=sl_price,
+                limitprice=tp_price,
+                exectype=bt.Order.Market # Execute at market on next bar open
+            )
+            # print(f"[{self.data.datetime.date(0)}] SELL Bracket Sent: Entry Ref={current_close:.5f}, SL={sl_price:.5f}, TP={tp_price:.5f}")
 
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
-            # An order has been submitted/accepted - Nothing to do
-            return
-        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            # print(f'Order Canceled/Margin/Rejected: Status {order.getstatusname()}')
-            pass # Reduce noise
+            # Active order - Do nothing further unless it's the main order confirmation
+            if order.isbuy() or order.issell(): # Was it the main buy/sell order?
+                # print(f"Order {order.getstatusname()}: Type {'Buy' if order.isbuy() else 'Sell'}, Ref: {order.ref}")
+                pass
+            return # Don't reset self.order until completion/failure
 
-        # Reset order variable irrespective of status after completion/rejection etc.
-        self.order = None
+        if order.status == order.Completed:
+            # Check if it was the main entry order or one of the SL/TP children
+            price = order.executed.price
+            size = order.executed.size
+            comm = order.executed.comm
+            # if order.isbuy() or order.issell(): # Main entry order executed
+            #     print(f"ORDER EXECUTED: {'BUY' if order.isbuy() else 'SELL'}, Price: {price:.5f}, Size: {size}, Comm: {comm:.2f}")
+            # elif order.isstop(): # Stop loss executed
+            #     print(f"STOP LOSS HIT: Price: {price:.5f}, Size: {size}, Comm: {comm:.2f}")
+            # elif order.islimit(): # Take profit executed
+            #     print(f"TAKE PROFIT HIT: Price: {price:.5f}, Size: {size}, Comm: {comm:.2f}")
+
+            # Reset order tracking ONLY when the order chain completes (entry or exit)
+            # Since we prevent new orders while self.position exists, we can reset here
+            self.order = None
+
+        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
+            # print(f'Order Failed/Cancelled: {order.getstatusname()}')
+            self.order = None # Allow new orders
+
 
 ''' ------------------------------
-Part 3, Backtest the strategy
-'''
-def strategy(data):
-    cerebro = bt.Cerebro()
-    cerebro.addstrategy(EmaCrossoverStrategy, ema_fast=10, ema_mid=50, ema_slow=200, fixed_sl=20, reward_ratio=3.0)
-    # Add a PercentSizer
-    cerebro.addsizer(bt.sizers.PercentSizer, percents=2) # Using 2% size as example
+Part 3, Backtest the strategy (MODIFIED)
+------------------------------ '''
+def run_backtrader_test(data, params):
+    cerebro = bt.Cerebro(stdstats=True) # Disable standard observers if plotting manually or just want analyzers
+
+    # Add strategy with the provided parameters
+    cerebro.addstrategy(EmaCrossoverStrategy, **params)
 
     # Add the data feed
     data_feed = bt.feeds.PandasData(dataname=data)
     cerebro.adddata(data_feed)
 
-    # Set the initial cash
-    cerebro.broker.setcash(10000)
-    # Optional: Set commission (e.g., 0.1% per trade)
-    # cerebro.broker.setcommission(commission=0.001)
+    # Set the initial cash (must match Script 1)
+    initial_capital = 10000
+    cerebro.broker.setcash(initial_capital)
 
-    # Add analyzers
+    # Set commission to zero (must match Script 1)
+    cerebro.broker.setcommission(commission=0.0)
+
+    # Set sizer to approximate full investment (must match Script 1 intent)
+    cerebro.addsizer(bt.sizers.PercentSizer, percents=99)
+
+    # Add analyzers (use names consistent with Script 1 where possible)
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trade_analyzer')
-    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe', timeframe=bt.TimeFrame.Months)
+    # Ensure Sharpe uses 4H timeframe and zero risk-free rate for closer comparison
+    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe', timeframe=bt.TimeFrame.Minutes, compression=240, riskfreerate=0.0)
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
     cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-    cerebro.addanalyzer(bt.analyzers.SQN, _name='sqn')
+    cerebro.addanalyzer(bt.analyzers.SQN, _name='sqn') # System Quality Number, useful metric
 
     # Run the backtest
-    print("\n🚀 Starting Backtest...")
+    print(f"\n🚀 Starting Backtrader Run with Params: {params}")
     results = cerebro.run()
-    strategy = results[0]
+    strategy_instance = results[0] # Get the first strategy instance
 
     # Retrieve analyzer results
-    trade_analysis = strategy.analyzers.trade_analyzer.get_analysis()
-    sharpe_analysis = strategy.analyzers.sharpe.get_analysis()
-    drawdown_analysis = strategy.analyzers.drawdown.get_analysis()
-    returns_analysis = strategy.analyzers.returns.get_analysis()
-    sqn_analysis = strategy.analyzers.sqn.get_analysis()
+    final_value = cerebro.broker.getvalue()
+    trade_analysis = strategy_instance.analyzers.trade_analyzer.get_analysis()
+    sharpe_analysis = strategy_instance.analyzers.sharpe.get_analysis()
+    drawdown_analysis = strategy_instance.analyzers.drawdown.get_analysis()
+    returns_analysis = strategy_instance.analyzers.returns.get_analysis()
+    sqn_analysis = strategy_instance.analyzers.sqn.get_analysis()
 
-    # Display results
-    print("\n--- Backtest Results ---")
-    print(f"Final Portfolio Value: {cerebro.broker.getvalue():.2f}")
-    print(f"Net Profit: {cerebro.broker.getvalue() - 10000:.2f}")
-    print(f"Sharpe Ratio: {sharpe_analysis['sharperatio']:.2f}" if 'sharperatio' in sharpe_analysis else "Sharpe Ratio: N/A")
-    print(f"Max Drawdown: {drawdown_analysis.max.drawdown:.2f}%")
-    print(f"Total Return: {returns_analysis['rtot'] * 100:.2f}%" if 'rtot' in returns_analysis else "Total Return: N/A")
-    print(f"SQN: {sqn_analysis['sqn']:.2f}" if 'sqn' in sqn_analysis else "SQN: N/A")
+    # --- Display results ---
+    print("\n--- Backtrader Results ---")
+    print(f"Final Portfolio Value: {final_value:.2f}")
+    print(f"Net Profit: {final_value - initial_capital:.2f}")
+    print(f"Total Return: {returns_analysis.get('rtot', 'N/A') * 100:.2f}%" if isinstance(returns_analysis.get('rtot'), (int, float)) else "Total Return: N/A")
+    print(f"Sharpe Ratio: {sharpe_analysis.get('sharperatio', 'N/A'):.3f}" if isinstance(sharpe_analysis.get('sharperatio'), (int, float)) else "Sharpe Ratio: N/A")
+    print(f"Max Drawdown: {drawdown_analysis.max.get('drawdown', 'N/A'):.2f}%" if isinstance(drawdown_analysis.max.get('drawdown'), (int, float)) else "Max Drawdown: N/A")
+    print(f"SQN: {sqn_analysis.get('sqn', 'N/A'):.2f}" if isinstance(sqn_analysis.get('sqn'), (int, float)) else "SQN: N/A")
 
-    # Trade analysis
+    # Trade analysis details
+    total_trades = trade_analysis.total.get('closed', 0)
+    won_trades = trade_analysis.won.get('total', 0)
+    lost_trades = trade_analysis.lost.get('total', 0)
+    win_rate = (won_trades / total_trades * 100) if total_trades > 0 else 0
+    avg_win = trade_analysis.won.pnl.get('average', 0)
+    avg_loss = trade_analysis.lost.pnl.get('average', 0)
+
     print("\n--- Trade Analysis ---")
-    print(f"Total Trades: {trade_analysis.total.closed if 'total' in trade_analysis and 'closed' in trade_analysis.total else 'N/A'}")
-    print(f"Winning Trades: {trade_analysis.won.total if 'won' in trade_analysis and 'total' in trade_analysis.won else 'N/A'}")
-    print(f"Losing Trades: {trade_analysis.lost.total if 'lost' in trade_analysis and 'total' in trade_analysis.lost else 'N/A'}")
-    print(f"Win Rate: {trade_analysis.won.total / trade_analysis.total.closed * 100:.2f}%" if 'won' in trade_analysis and 'total' in trade_analysis.won and 'closed' in trade_analysis.total else "Win Rate: N/A")
-    print(f"Average Win: {trade_analysis.won.pnl.average:.2f}" if 'won' in trade_analysis and 'pnl' in trade_analysis.won and 'average' in trade_analysis.won.pnl else "Average Win: N/A")
-    print(f"Average Loss: {trade_analysis.lost.pnl.average:.2f}" if 'lost' in trade_analysis and 'pnl' in trade_analysis.lost and 'average' in trade_analysis.lost.pnl else "Average Loss: N/A")
+    print(f"Total Closed Trades: {total_trades}")
+    print(f"Winning Trades: {won_trades}")
+    print(f"Losing Trades: {lost_trades}")
+    print(f"Win Rate: {win_rate:.2f}%")
+    print(f"Average Win PnL: {avg_win:.2f}")
+    print(f"Average Loss PnL: {avg_loss:.2f}")
 
-    # Plot the results (optional)
-    cerebro.plot()
+    # Plot the results - this will show the equity curve in the top panel
+    print("\nGenerating plot...")
+    cerebro.plot(style='candlestick', barup='green', bardown='red') # You can adjust style if needed
+    print("Plot window opened (or saved if running non-interactively).")
+
 
 if __name__ == '__main__':
-    # Ensure 'data' is loaded correctly before calling
-    if 'data' in globals() and isinstance(data, pd.DataFrame) and not data.empty:
-        strategy(data)
+    if 'price_df' in globals() and isinstance(price_df, pd.DataFrame) and not price_df.empty:
+
+        # --- !!! IMPORTANT: PASTE OPTUNA RESULTS HERE !!! ---
+        # Replace these values with the parameters from your best Optuna trial (e.g., best Sharpe)
+        best_params_from_optuna = {
+            'ema_fast': 35,      # Example: Replace with actual Optuna result
+            'ema_mid': 85,       # Example: Replace with actual Optuna result
+            'ema_slow': 247,     # Example: Replace with actual Optuna result
+            'fixed_sl': 11,      # Example: Replace with actual Optuna result (in pips)
+            'reward_ratio': 0.6  # Example: Replace with actual Optuna result
+        }
+        # --- !!! IMPORTANT !!! ---
+
+        # Run the backtest using the loaded data and the best parameters
+        run_backtrader_test(price_df, best_params_from_optuna)
+
     else:
         print("Data was not loaded properly. Exiting.")

@@ -51,7 +51,7 @@ Part 2, Define the Objective Function for Optuna
 INITIAL_CAPITAL = 10000
 COMMISSION_PCT = 0.0  # Example: 0.05% per trade (adjust as needed)
 PIP_VALUE_EURUSD = 0.0001
-DATA_FREQUENCY = '4H' # Important for performance calculations
+DATA_FREQUENCY = '4h' # Important for performance calculations
 MIN_TRADES = 10 # Minimum number of trades required for a valid trial
 
 def run_backtest(close_prices, params):
@@ -123,22 +123,15 @@ def objective(trial):
     Objective function for Optuna MULTI-OBJECTIVE optimization.
     Suggests parameters, runs backtest, and returns multiple performance metrics.
     """
-    # --- Suggest Parameters ---
-    ema_fast = trial.suggest_int('ema_fast', 5, 50)    # Wider range start
-    ema_mid = trial.suggest_int('ema_mid', 20, 100)   # Wider range start
-    ema_slow = trial.suggest_int('ema_slow', 100, 250) # Wider range start
+    # 1) Suggest each parameter exactly once:
+    ema_fast  = trial.suggest_int('ema_fast', 5, 50)
+    # enforce ema_mid > ema_fast + 10
+    ema_mid   = trial.suggest_int('ema_mid', ema_fast + 10, 150)
+    # enforce ema_slow > ema_mid + 50
+    ema_slow  = trial.suggest_int('ema_slow', ema_mid + 50, 300)
 
-    # Ensure fast < mid < slow logic more efficiently
-    # Adjust mid based on fast, and slow based on mid
-    ema_mid = trial.suggest_int('ema_mid', ema_fast + 10, 150) # Ensure mid > fast + reasonable gap
-    ema_slow = trial.suggest_int('ema_slow', ema_mid + 50, 300) # Ensure slow > mid + reasonable gap
-
-    # Prune explicitly if constraint is somehow violated (shouldn't be with new suggestions)
-    if not (ema_fast < ema_mid < ema_slow):
-         raise optuna.exceptions.TrialPruned("EMA order constraint violated.")
-
-    fixed_sl = trial.suggest_int('fixed_sl', 5, 50) # Pips
-    reward_ratio = trial.suggest_float('reward_ratio', 0.5, 5.0, step=0.1)
+    fixed_sl      = trial.suggest_int('fixed_sl', 5, 50)           # SL in pips
+    reward_ratio  = trial.suggest_float('reward_ratio', 0.5, 5.0, step=0.1)
 
     params = {
         'ema_fast': ema_fast,
@@ -148,28 +141,19 @@ def objective(trial):
         'reward_ratio': reward_ratio,
     }
 
-    # --- Run Backtest ---
+    # 2) Run your backtest
     portfolio = run_backtest(close_prices, params)
 
-    # --- Calculate Metrics & Handle Invalid Trials ---
+    # 3) Prune if too few trades or outright errors
     if portfolio is None or portfolio.trades.count() < MIN_TRADES:
-        # Prune trials with errors, or too few trades for metrics to be meaningful
-        raise optuna.exceptions.TrialPruned(f"Error, or fewer than {MIN_TRADES} trades executed.")
+    # instead of pruning, give it the worst-possible objectives
+        return -np.inf, 0.0, -np.inf
 
-    # Calculate Sharpe Ratio (maximize)
-    sharpe = portfolio.sharpe_ratio()
-    sharpe = sharpe if np.isfinite(sharpe) else -1.0 # Penalize non-finite Sharpe
+    # 4) Calculate and return your three metrics
+    sharpe       = portfolio.sharpe_ratio() or -1.0
+    win_rate     = portfolio.trades.win_rate() or 0.0
+    max_drawdown = portfolio.max_drawdown() or -1.0
 
-    # Calculate Win Rate (maximize)
-    win_rate = portfolio.trades.win_rate() # win_rate is typically between 0 and 100
-    win_rate = win_rate if np.isfinite(win_rate) else 0.0 # Penalize non-finite Win Rate
-
-    # Calculate Max Drawdown (maximize - since it's negative, maximizing brings it closer to 0)
-    max_drawdown = portfolio.max_drawdown() # max_drawdown is typically negative (e.g., -0.1 for -10%)
-    max_drawdown = max_drawdown if np.isfinite(max_drawdown) else -1.0 # Penalize non-finite Drawdown
-
-    # --- Return Multiple Metrics ---
-    # Ensure all returned values are floats
     return float(sharpe), float(win_rate), float(max_drawdown)
 
 
