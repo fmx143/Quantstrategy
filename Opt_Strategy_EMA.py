@@ -13,8 +13,17 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 Part 1, import data
 ------------------------------ '''
 try:
-    # Using the 4H data as specified in the original request
-    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_4H_5y_cleaned.csv'
+    # Using the data as specified in the original request
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_4H_5y_cleaned.csv'
+    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_1H_5y_clean.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_1min_5y_cleaned.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_Daily_5y_cleaned.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_4H_5y_cleaned.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_1H_5y_cleaned.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_1min_5y_clean.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_Daily_5y_cleaned.csv'
+
+
     price_df = pd.read_csv(data_path)
     price_df['Datetime'] = pd.to_datetime(price_df['Datetime'])
     price_df.set_index('Datetime', inplace=True)
@@ -51,7 +60,7 @@ Part 2, Define the Objective Function for Optuna
 INITIAL_CAPITAL = 10000
 COMMISSION_PCT = 0.0  # Example: 0.05% per trade (adjust as needed)
 PIP_VALUE_EURUSD = 0.0001
-DATA_FREQUENCY = '4h' # Important for performance calculations
+DATA_FREQUENCY = '1h' # Important for performance calculations
 MIN_TRADES = 10 # Minimum number of trades required for a valid trial
 
 def run_backtest(close_prices, params):
@@ -124,14 +133,14 @@ def objective(trial):
     Suggests parameters, runs backtest, and returns multiple performance metrics.
     """
     # 1) Suggest each parameter exactly once:
-    ema_fast  = trial.suggest_int('ema_fast', 5, 50)
+    ema_fast = trial.suggest_int('ema_fast', 5, 50)
     # enforce ema_mid > ema_fast + 10
-    ema_mid   = trial.suggest_int('ema_mid', ema_fast + 10, 150)
+    ema_mid = trial.suggest_int('ema_mid', ema_fast + 10, 150)
     # enforce ema_slow > ema_mid + 50
-    ema_slow  = trial.suggest_int('ema_slow', ema_mid + 50, 300)
+    ema_slow = trial.suggest_int('ema_slow', ema_mid + 50, 300)
 
-    fixed_sl      = trial.suggest_int('fixed_sl', 5, 50)           # SL in pips
-    reward_ratio  = trial.suggest_float('reward_ratio', 0.5, 5.0, step=0.1)
+    fixed_sl = trial.suggest_int('fixed_sl', 5, 50)           # SL in pips
+    reward_ratio = trial.suggest_float('reward_ratio', 0.5, 5.0, step=0.1)
 
     params = {
         'ema_fast': ema_fast,
@@ -153,8 +162,10 @@ def objective(trial):
     sharpe       = portfolio.sharpe_ratio() or -1.0
     win_rate     = portfolio.trades.win_rate() or 0.0
     max_drawdown = portfolio.max_drawdown() or -1.0
+    final_equity = portfolio.final_value() or 0.0  # Get the final equity value
 
-    return float(sharpe), float(win_rate), float(max_drawdown)
+
+    return float(sharpe), float(win_rate), float(max_drawdown), float(final_equity)
 
 
 ''' ------------------------------
@@ -170,8 +181,8 @@ if __name__ == '__main__':
         storage_name = f"sqlite:///{study_name}.db"
 
         # Define the directions for each objective (must match the order returned by the objective function)
-        # Maximize Sharpe, Maximize Win Rate, Maximize Max Drawdown (closer to 0)
-        direction = ['maximize', 'maximize', 'maximize']
+        # Maximize Sharpe, Maximize Win Rate, Maximize Max Drawdown (closer to 0), Maximize Final Equity
+        direction = ['maximize', 'maximize', 'maximize', 'maximize']
 
         study = optuna.create_study(
             study_name=study_name,
@@ -181,7 +192,7 @@ if __name__ == '__main__':
         )
 
         # --- Run Optimization ---
-        n_trials = 500 # Adjust number of trials as needed
+        n_trials = 50 # Adjust number of trials as needed
         print(f"🚀 Starting Multi-Objective Optimization for {n_trials} trials...")
         print(f"   Objectives: Sharpe Ratio (max), Win Rate (max), Max Drawdown (max -> min magnitude)")
         print(f"   Study Name: {study_name}")
@@ -221,25 +232,24 @@ if __name__ == '__main__':
         else:
             print("Showing results for Pareto optimal trials (trade-offs between objectives):")
             print("-" * 80)
-            print(f"{'Trial':>5} | {'Sharpe':>10} | {'Win Rate':>10} | {'Max DD':>10} | {'Params':<40}")
-            print("-" * 80)
+            print(f"{'Trial':>5} | {'Sharpe':>10} | {'Win Rate':>10} | {'Max DD':>10} | {'Final Equity':>15} | {'Params':<40}")
+            print("-" * 100)
             successful_pareto_count = 0
             for i, trial in enumerate(pareto_trials):
                 # <<< START MODIFICATION >>>
                 # Check if the trial has the expected number of values before accessing them
-                if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None and len(trial.values) == 3:
+                if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None and len(trial.values) == 4:
                     params_str = ', '.join(f"{k}={v}" for k, v in trial.params.items())
                     # Access values using indices 0, 1, 2
-                    print(f"{trial.number:>5} | {trial.values[0]:>10.4f} | {trial.values[1]:>10.2f} | {trial.values[2]:>10.4f} | {params_str}")
+                    print(f"{trial.number:>5} | {trial.values[0]:>10.4f} | {trial.values[1]:>10.2f} | {trial.values[2]:>10.4f} | {trial.values[3]:>15.2f} | {params_str}")
                     successful_pareto_count += 1
                 else:
                     # Optionally print a warning for skipped trials
                     print(f"Skipping Trial {trial.number}: State={trial.state}, Values={trial.values} (Incomplete/Invalid)")
-                # <<< END MODIFICATION >>>
 
             print("-" * 80)
             if successful_pareto_count == 0:
-                 print("Warning: Although Pareto trials were identified, none had complete/valid objective values.")
+                print("Warning: Although Pareto trials were identified, none had complete/valid objective values.")
 
 
         # --- [Rest of the code for finding individual bests remains the same] ---
@@ -254,15 +264,19 @@ if __name__ == '__main__':
             # Check if 'values_0', 'values_1', 'values_2' exist, otherwise skip this section
             required_value_cols = ['values_0', 'values_1', 'values_2']
             if not all(col in completed_trials_df.columns for col in required_value_cols):
-                 print("Could not find required 'values_x' columns in completed trials DataFrame. Skipping individual bests.")
+                print("Could not find required 'values_x' columns in completed trials DataFrame. Skipping individual bests.")
             elif not completed_trials_df.empty:
                  # Rename columns (make sure these names exist first)
-                 completed_trials_df.rename(columns={'values_0': 'sharpe', 'values_1': 'win_rate', 'values_2': 'max_drawdown'}, inplace=True)
-
+                 completed_trials_df.rename(columns={
+                    'values_0': 'sharpe',
+                    'values_1': 'win_rate',
+                    'values_2': 'max_drawdown',
+                    'values_3': 'final_equity'
+                 }, inplace=True)
                  # Check if columns were successfully renamed and drop rows with NaN in metric columns before finding idxmax
-                 metric_cols = ['sharpe', 'win_rate', 'max_drawdown']
+                 metric_cols = ['sharpe', 'win_rate', 'max_drawdown', 'final_equity']
                  if not all(col in completed_trials_df.columns for col in metric_cols):
-                     print("Failed to rename metric columns. Skipping individual bests.")
+                    print("Failed to rename metric columns. Skipping individual bests.")
                  else:
                     completed_trials_df.dropna(subset=metric_cols, inplace=True) # Drop rows where metrics couldn't be calculated
 
@@ -273,57 +287,56 @@ if __name__ == '__main__':
                         best_sharpe_trial = study.trials[best_sharpe_trial_num]
                         print(f"\nBest Sharpe Ratio Trial (#{best_sharpe_trial.number}):")
                         # Check values before printing
-                        if best_sharpe_trial.values and len(best_sharpe_trial.values) == 3:
-                             print(f"  Metrics: Sharpe={best_sharpe_trial.values[0]:.4f}, WinRate={best_sharpe_trial.values[1]:.2f}, MaxDD={best_sharpe_trial.values[2]:.4f}")
-                             print(f"  Params: {best_sharpe_trial.params}")
+                        if best_sharpe_trial.values and len(best_sharpe_trial.values) == 4:
+                            print(f"  Metrics: Sharpe={best_sharpe_trial.values[0]:.4f}, WinRate={best_sharpe_trial.values[1]:.2f}, MaxDD={best_sharpe_trial.values[2]:.4f}, FinalEquity={best_sharpe_trial.values[3]:.2f}")
+                            print(f"  Params: {best_sharpe_trial.params}")
                         else:
-                             print(f"  Metrics: Incomplete data - {best_sharpe_trial.values}")
-                             print(f"  Params: {best_sharpe_trial.params}")
-
+                            print(f"  Metrics: Incomplete data - {best_sharpe_trial.values}")
+                            print(f"  Params: {best_sharpe_trial.params}")
 
                         # Find best Win Rate
                         best_winrate_idx = completed_trials_df['win_rate'].idxmax()
                         best_winrate_trial_num = int(completed_trials_df.loc[best_winrate_idx]['number'])
                         best_winrate_trial = study.trials[best_winrate_trial_num]
                         print(f"\nBest Win Rate Trial (#{best_winrate_trial.number}):")
-                        if best_winrate_trial.values and len(best_winrate_trial.values) == 3:
-                             print(f"  Metrics: Sharpe={best_winrate_trial.values[0]:.4f}, WinRate={best_winrate_trial.values[1]:.2f}, MaxDD={best_winrate_trial.values[2]:.4f}")
-                             print(f"  Params: {best_winrate_trial.params}")
+                        if best_winrate_trial.values and len(best_winrate_trial.values) == 4:
+                            print(f"  Metrics: Sharpe={best_winrate_trial.values[0]:.4f}, WinRate={best_winrate_trial.values[1]:.2f}, MaxDD={best_winrate_trial.values[2]:.4f}, FinalEquity={best_winrate_trial.values[3]:.2f}")
+                            print(f"  Params: {best_winrate_trial.params}")
                         else:
-                             print(f"  Metrics: Incomplete data - {best_winrate_trial.values}")
-                             print(f"  Params: {best_winrate_trial.params}")
+                            print(f"  Metrics: Incomplete data - {best_winrate_trial.values}")
+                            print(f"  Params: {best_winrate_trial.params}")
 
                         # Find best Max Drawdown
                         best_drawdown_idx = completed_trials_df['max_drawdown'].idxmax()
                         best_drawdown_trial_num = int(completed_trials_df.loc[best_drawdown_idx]['number'])
                         best_drawdown_trial = study.trials[best_drawdown_trial_num]
                         print(f"\nBest Max Drawdown Trial (#{best_drawdown_trial.number}):")
-                        if best_drawdown_trial.values and len(best_drawdown_trial.values) == 3:
-                            print(f"  Metrics: Sharpe={best_drawdown_trial.values[0]:.4f}, WinRate={best_drawdown_trial.values[1]:.2f}, MaxDD={best_drawdown_trial.values[2]:.4f}")
+                        if best_drawdown_trial.values and len(best_drawdown_trial.values) == 4:
+                            print(f"  Metrics: Sharpe={best_drawdown_trial.values[0]:.4f}, WinRate={best_drawdown_trial.values[1]:.2f}, MaxDD={best_drawdown_trial.values[2]:.4f}, FinalEquity={best_drawdown_trial.values[3]:.2f}")
                             print(f"  Params: {best_drawdown_trial.params}")
                         else:
-                             print(f"  Metrics: Incomplete data - {best_drawdown_trial.values}")
-                             print(f"  Params: {best_drawdown_trial.params}")
+                            print(f"  Metrics: Incomplete data - {best_drawdown_trial.values}")
+                            print(f"  Params: {best_drawdown_trial.params}")
 
 
                         # --- Run backtest with best Sharpe parameters ---
                         print("\n--- Running backtest with the 'Best Sharpe Ratio' parameters ---")
                         # Ensure the best_sharpe_trial has valid parameters before running
                         if best_sharpe_trial.params:
-                             final_portfolio = run_backtest(close_prices, best_sharpe_trial.params)
-                             if final_portfolio is not None:
+                            final_portfolio = run_backtest(close_prices, best_sharpe_trial.params)
+                            if final_portfolio is not None:
                                 print("\n--- Performance Metrics (Best Sharpe Params) ---")
                                 print(final_portfolio.stats())
                                 # Plotting Optional
-                             else:
+                            else:
                                 print("Could not run final backtest with best Sharpe parameters.")
                         else:
-                             print("Best Sharpe trial had no parameters to run backtest.")
+                            print("Best Sharpe trial had no parameters to run backtest.")
  
                     else:
-                         print("No completed trials with valid metrics found after filtering NaNs.")
+                        print("No completed trials with valid metrics found after filtering NaNs.")
             else:
-                 print("No completed trials found to determine individual bests.")
+                print("No completed trials found to determine individual bests.")
 
         except Exception as e:
             print(f"\nError processing trials dataframe or finding individual bests: {e}")
