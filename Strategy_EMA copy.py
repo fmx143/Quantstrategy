@@ -7,7 +7,7 @@ Part 1, import data (Keep as is)
 ------------------------------ '''
 try:
     # Using the 4H data as specified in the original request
-    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_4H_5y_cleaned.csv'
+    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_1H_5y_clean.csv'
     price_df = pd.read_csv(data_path)
     price_df['Datetime'] = pd.to_datetime(price_df['Datetime'])
     price_df.set_index('Datetime', inplace=True)
@@ -49,9 +49,26 @@ def run_vectorbt_test(data, params):
     pip_value = 0.0001
     init_cash = 10000
     fees = 0.0
-    freq = '4h'
+    freq = '1h'
 
     print(f"\n🚀 Starting VectorBT Run with Params: {params}")
+
+    # Dynamically calculate bars per year based on the data frequency
+    def get_bars_per_year(freq):
+        if freq == '1d':  # Daily data
+            return 252
+        elif freq == '1h':  # Hourly data
+            return 252 * 24
+        elif freq == '4h':  # 4-hour data
+            return 252 * 6
+        elif freq == '15min':  # 15-minute data
+            return 252 * 24 * 4
+        elif freq == '5min':  # 5-minute data
+            return 252 * 24 * 12
+        elif freq == '1min':  # 1-minute data
+            return 252 * 24 * 60
+        else:
+            raise ValueError(f"Unsupported frequency: {freq}")
 
     # Calculate true EMAs
     fast_ema = vbt.MA.run(data['close'], window=ema_fast, ewm=True).ma
@@ -94,7 +111,8 @@ def run_vectorbt_test(data, params):
 
     # Get Sharpe ratio
     returns = portfolio.returns()
-    sharpe = returns.mean() / returns.std() * np.sqrt(252 * 6)  # Annualized with 6 bars per day (4h timeframe)
+    bars_per_year = get_bars_per_year(freq)
+    sharpe = returns.mean() / returns.std() * np.sqrt(bars_per_year)
     print(f"Sharpe Ratio: {sharpe:.3f}")
 
     # Get drawdown
@@ -144,14 +162,41 @@ if __name__ == '__main__':
     if 'price_df' in globals() and isinstance(price_df, pd.DataFrame) and not price_df.empty:
         # --- Replace these values with the parameters from your best Optuna trial (e.g., best Sharpe)
         best_params_from_optuna = {
-            'ema_fast': 26,      # Example: Replace with actual Optuna result
-            'ema_mid': 149,       # Example: Replace with actual Optuna result
-            'ema_slow': 294,     # Example: Replace with actual Optuna result
-            'fixed_sl': 15,      # Example: Replace with actual Optuna result (in pips)
-            'reward_ratio': 0.9 # Example: Replace with actual Optuna result
+            'ema_fast': 27,      # Example: Replace with actual Optuna result
+            'ema_mid': 53,       # Example: Replace with actual Optuna result
+            'ema_slow': 118,     # Example: Replace with actual Optuna result
+            'fixed_sl': 19,      # Example: Replace with actual Optuna result (in pips)
+            'reward_ratio': 1.8 # Example: Replace with actual Optuna result
         }
 
         # Run the backtest using the loaded data and the best parameters
         portfolio, fig = run_vectorbt_test(price_df, best_params_from_optuna)
     else:
         print("Data was not loaded properly. Exiting.")
+
+'''-------------------------
+Last terminal output
+
+1) Data loaded successfully. Shape: (31181, 5)
+
+🚀 Starting VectorBT Run with Params: {'ema_fast': 27, 'ema_mid': 53, 'ema_slow': 118, 'fixed_sl': 19, 'reward_ratio': 1.8}
+
+--- VectorBT Results ---
+Final Portfolio Value: 11763.01
+Net Profit: 1763.01
+Total Return: 17.63%
+Sharpe Ratio: 1.733
+Max Drawdown: -1.61%
+SQN: 3.90
+
+--- Trade Analysis ---
+Total Closed Trades: 156
+Winning Trades: 83
+Losing Trades: 73
+Win Rate: 53.21%
+Average Win PnL: 43.08
+Average Loss PnL: -24.83
+
+Generating plot...
+
+------------------------'''
