@@ -197,7 +197,7 @@ if __name__ == '__main__':
         )
 
         # --- Run Optimization ---
-        n_trials = 1000 # Adjust number of trials as needed
+        n_trials = 500 # Adjust number of trials as needed
         print(f"🚀 Starting Multi-Objective Optimization for {n_trials} trials...")
         print(f"   Objectives: Sharpe Ratio (max), Win Rate (max), Max Drawdown (max -> min magnitude)")
         print(f"   Study Name: {study_name}")
@@ -239,65 +239,113 @@ if __name__ == '__main__':
             print("-" * 80)
             print(f"{'Trial':>5} | {'Sharpe':>10} | {'Win Rate':>10} | {'Max DD':>10} | {'Params':<40}")
             print("-" * 80)
+            successful_pareto_count = 0
             for i, trial in enumerate(pareto_trials):
-                params_str = ', '.join(f"{k}={v}" for k, v in trial.params.items())
-                print(f"{trial.number:>5} | {trial.values[0]:>10.4f} | {trial.values[1]:>10.2f} | {trial.values[2]:>10.4f} | {params_str}")
+                # <<< START MODIFICATION >>>
+                # Check if the trial has the expected number of values before accessing them
+                if trial.state == optuna.trial.TrialState.COMPLETE and trial.values is not None and len(trial.values) == 3:
+                    params_str = ', '.join(f"{k}={v}" for k, v in trial.params.items())
+                    # Access values using indices 0, 1, 2
+                    print(f"{trial.number:>5} | {trial.values[0]:>10.4f} | {trial.values[1]:>10.2f} | {trial.values[2]:>10.4f} | {params_str}")
+                    successful_pareto_count += 1
+                else:
+                    # Optionally print a warning for skipped trials
+                    print(f"Skipping Trial {trial.number}: State={trial.state}, Values={trial.values} (Incomplete/Invalid)")
+                # <<< END MODIFICATION >>>
+
             print("-" * 80)
+            if successful_pareto_count == 0:
+                 print("Warning: Although Pareto trials were identified, none had complete/valid objective values.")
 
-            # --- Optional: Find and display the trial that was best for EACH objective individually ---
-            print("\n--- Trials with highest individual metrics (among all completed trials) ---")
 
+        # --- [Rest of the code for finding individual bests remains the same] ---
+        # --- Optional: Find and display the trial that was best for EACH objective individually ---
+        print("\n--- Trials with highest individual metrics (among all completed trials) ---")
+
+        try: # Add error handling around DataFrame creation/manipulation
             completed_trials_df = study.trials_dataframe(multi_index=False) # Get results as DataFrame
-            completed_trials_df = completed_trials_df[completed_trials_df['state'] == 'COMPLETE'] # Filter for completed trials
+            # Filter ONLY for completed trials AFTER creating the dataframe
+            completed_trials_df = completed_trials_df[completed_trials_df['state'] == 'COMPLETE'].copy() # Use .copy() to avoid SettingWithCopyWarning
 
-            if not completed_trials_df.empty:
-                 # Need to rename columns as Optuna >= 3.0 names them values_0, values_1, etc.
+            # Check if 'values_0', 'values_1', 'values_2' exist, otherwise skip this section
+            required_value_cols = ['values_0', 'values_1', 'values_2']
+            if not all(col in completed_trials_df.columns for col in required_value_cols):
+                 print("Could not find required 'values_x' columns in completed trials DataFrame. Skipping individual bests.")
+            elif not completed_trials_df.empty:
+                 # Rename columns (make sure these names exist first)
                  completed_trials_df.rename(columns={'values_0': 'sharpe', 'values_1': 'win_rate', 'values_2': 'max_drawdown'}, inplace=True)
 
-                 # Find best Sharpe
-                 best_sharpe_trial_num = completed_trials_df.loc[completed_trials_df['sharpe'].idxmax()]['number']
-                 best_sharpe_trial = study.trials[best_sharpe_trial_num]
-                 print(f"\nBest Sharpe Ratio Trial (#{best_sharpe_trial.number}):")
-                 print(f"  Metrics: Sharpe={best_sharpe_trial.values[0]:.4f}, WinRate={best_sharpe_trial.values[1]:.2f}, MaxDD={best_sharpe_trial.values[2]:.4f}")
-                 print(f"  Params: {best_sharpe_trial.params}")
-
-                 # Find best Win Rate
-                 best_winrate_trial_num = completed_trials_df.loc[completed_trials_df['win_rate'].idxmax()]['number']
-                 best_winrate_trial = study.trials[best_winrate_trial_num]
-                 print(f"\nBest Win Rate Trial (#{best_winrate_trial.number}):")
-                 print(f"  Metrics: Sharpe={best_winrate_trial.values[0]:.4f}, WinRate={best_winrate_trial.values[1]:.2f}, MaxDD={best_winrate_trial.values[2]:.4f}")
-                 print(f"  Params: {best_winrate_trial.params}")
-
-                 # Find best Max Drawdown (highest value, i.e., closest to zero)
-                 best_drawdown_trial_num = completed_trials_df.loc[completed_trials_df['max_drawdown'].idxmax()]['number']
-                 best_drawdown_trial = study.trials[best_drawdown_trial_num]
-                 print(f"\nBest Max Drawdown Trial (#{best_drawdown_trial.number}):")
-                 print(f"  Metrics: Sharpe={best_drawdown_trial.values[0]:.4f}, WinRate={best_drawdown_trial.values[1]:.2f}, MaxDD={best_drawdown_trial.values[2]:.4f}")
-                 print(f"  Params: {best_drawdown_trial.params}")
-
-                 # --- Optional: Run backtest with one of the best trials (e.g., best Sharpe) ---
-                 print("\n--- Running backtest with the 'Best Sharpe Ratio' parameters ---")
-                 final_portfolio = run_backtest(close_prices, best_sharpe_trial.params)
-                 if final_portfolio is not None:
-                    print("\n--- Performance Metrics (Best Sharpe Params) ---")
-                    print(final_portfolio.stats())
-                    # Plotting (optional)
-                    try:
-                        fig = final_portfolio.plot()
-                        fig.show()
-                    except Exception as plot_err:
-                        print(f"Plotting failed: {plot_err}")
+                 # Check if columns were successfully renamed and drop rows with NaN in metric columns before finding idxmax
+                 metric_cols = ['sharpe', 'win_rate', 'max_drawdown']
+                 if not all(col in completed_trials_df.columns for col in metric_cols):
+                     print("Failed to rename metric columns. Skipping individual bests.")
                  else:
-                    print("Could not run final backtest with best Sharpe parameters.")
+                    completed_trials_df.dropna(subset=metric_cols, inplace=True) # Drop rows where metrics couldn't be calculated
 
+                    if not completed_trials_df.empty:
+                        # Find best Sharpe
+                        best_sharpe_idx = completed_trials_df['sharpe'].idxmax()
+                        best_sharpe_trial_num = int(completed_trials_df.loc[best_sharpe_idx]['number']) # Ensure it's int
+                        best_sharpe_trial = study.trials[best_sharpe_trial_num]
+                        print(f"\nBest Sharpe Ratio Trial (#{best_sharpe_trial.number}):")
+                        # Check values before printing
+                        if best_sharpe_trial.values and len(best_sharpe_trial.values) == 3:
+                             print(f"  Metrics: Sharpe={best_sharpe_trial.values[0]:.4f}, WinRate={best_sharpe_trial.values[1]:.2f}, MaxDD={best_sharpe_trial.values[2]:.4f}")
+                             print(f"  Params: {best_sharpe_trial.params}")
+                        else:
+                             print(f"  Metrics: Incomplete data - {best_sharpe_trial.values}")
+                             print(f"  Params: {best_sharpe_trial.params}")
+
+
+                        # Find best Win Rate
+                        best_winrate_idx = completed_trials_df['win_rate'].idxmax()
+                        best_winrate_trial_num = int(completed_trials_df.loc[best_winrate_idx]['number'])
+                        best_winrate_trial = study.trials[best_winrate_trial_num]
+                        print(f"\nBest Win Rate Trial (#{best_winrate_trial.number}):")
+                        if best_winrate_trial.values and len(best_winrate_trial.values) == 3:
+                             print(f"  Metrics: Sharpe={best_winrate_trial.values[0]:.4f}, WinRate={best_winrate_trial.values[1]:.2f}, MaxDD={best_winrate_trial.values[2]:.4f}")
+                             print(f"  Params: {best_winrate_trial.params}")
+                        else:
+                             print(f"  Metrics: Incomplete data - {best_winrate_trial.values}")
+                             print(f"  Params: {best_winrate_trial.params}")
+
+                        # Find best Max Drawdown
+                        best_drawdown_idx = completed_trials_df['max_drawdown'].idxmax()
+                        best_drawdown_trial_num = int(completed_trials_df.loc[best_drawdown_idx]['number'])
+                        best_drawdown_trial = study.trials[best_drawdown_trial_num]
+                        print(f"\nBest Max Drawdown Trial (#{best_drawdown_trial.number}):")
+                        if best_drawdown_trial.values and len(best_drawdown_trial.values) == 3:
+                            print(f"  Metrics: Sharpe={best_drawdown_trial.values[0]:.4f}, WinRate={best_drawdown_trial.values[1]:.2f}, MaxDD={best_drawdown_trial.values[2]:.4f}")
+                            print(f"  Params: {best_drawdown_trial.params}")
+                        else:
+                             print(f"  Metrics: Incomplete data - {best_drawdown_trial.values}")
+                             print(f"  Params: {best_drawdown_trial.params}")
+
+
+                        # --- Run backtest with best Sharpe parameters ---
+                        print("\n--- Running backtest with the 'Best Sharpe Ratio' parameters ---")
+                        # Ensure the best_sharpe_trial has valid parameters before running
+                        if best_sharpe_trial.params:
+                             final_portfolio = run_backtest(close_prices, best_sharpe_trial.params)
+                             if final_portfolio is not None:
+                                print("\n--- Performance Metrics (Best Sharpe Params) ---")
+                                print(final_portfolio.stats())
+                                # Plotting Optional
+                             else:
+                                print("Could not run final backtest with best Sharpe parameters.")
+                        else:
+                             print("Best Sharpe trial had no parameters to run backtest.")
+ 
+                    else:
+                         print("No completed trials with valid metrics found after filtering NaNs.")
             else:
                  print("No completed trials found to determine individual bests.")
 
+        except Exception as e:
+            print(f"\nError processing trials dataframe or finding individual bests: {e}")
+            import traceback
+            traceback.print_exc()
 
-        # --- Optuna Dashboard Reminder ---
-        print("\n--- Optuna Dashboard ---")
-        print("To visualize the multi-objective optimization study (Pareto front), run:")
-        print(f"optuna-dashboard {storage_name}")
+print(f"   Run 'optuna-dashboard {storage_name}' in your terminal to view progress.")
 
-    else:
-        print("Data was not loaded properly. Exiting.")
+        # --- [Optuna Dashboard Reminder and else block for data loading remain the same] ---
