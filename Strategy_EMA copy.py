@@ -175,7 +175,7 @@ if __name__ == '__main__':
         print("Data was not loaded properly. Exiting.")
 
 '''-------------------------
-Last terminal output
+Last terminal output (1H data)
 
 1) Data loaded successfully. Shape: (31181, 5)
 

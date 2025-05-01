@@ -4,8 +4,21 @@ import vectorbt as vbt
 import optuna
 import optuna_dashboard
 import warnings
+import random
 
-# Suppress specific warnings if needed (e.g., from TA-Lib if used indirectly)
+
+
+''' ------------------------------
+Part 1, Configuration & Constantes
+------------------------------ '''
+INITIAL_CAPITAL = 10000
+COMMISSION_PCT = 0.0  # Example: 0.05% per trade (adjust as needed)
+PIP_VALUE_EURUSD = 0.0001
+DATA_FREQUENCY = '15min' # Must match CSV timeframe (e.g., '1h', '15min')
+MIN_TRADES = 10 # Minimum number of trades required for a valid trial
+MC_ITERATIONS = 1000
+
+# Suppress warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -15,12 +28,14 @@ Part 1, import data
 try:
     # Using the data as specified in the original request
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_4H_5y_cleaned.csv'
-    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_1H_5y_clean.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_1H_5y_clean.csv'
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_1min_5y_cleaned.csv'
+    #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_15min_5y_clean.csv'
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\EURUSD_Tickstory_Daily_5y_cleaned.csv'
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_4H_5y_cleaned.csv'
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_1H_5y_cleaned.csv'
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_1min_5y_clean.csv'
+    data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_15min_5y_clean.csv'
     #data_path = r'C:\Users\loick\VS Code\Forex Historical Data\GBPUSD_Tickstory_Daily_5y_cleaned.csv'
 
 
@@ -53,15 +68,8 @@ except Exception as e:
     exit()
 
 ''' ------------------------------
-Part 2, Define the Objective Function for Optuna
+Part 2, Backtest Function
 ------------------------------ '''
-
-# --- Constants ---
-INITIAL_CAPITAL = 10000
-COMMISSION_PCT = 0.0  # Example: 0.05% per trade (adjust as needed)
-PIP_VALUE_EURUSD = 0.0001
-DATA_FREQUENCY = '1h' # Important for performance calculations
-MIN_TRADES = 10 # Minimum number of trades required for a valid trial
 
 def run_backtest(close_prices, params):
     """
@@ -126,19 +134,109 @@ def run_backtest(close_prices, params):
         print(f"Warning: Error during portfolio simulation for params {params}: {e}")
         return None
 
+''' ------------------------------
+Part 3 Monte Carlo Simulation
+------------------------------ '''
+def monte_carlo_trades(portfolio, n_iter=MC_ITERATIONS):
+    pnls = portfolio.trades.pnl.values
 
+    # Handle case with no trades
+    if len(pnls) == 0:
+        print("Warning: No trades available for Monte Carlo simulation.")
+        # Return placeholder values indicating no results
+        return {'sharpe': [0.0], 'max_dd': [0.0], 'total_return': [0.0]}
+
+
+    results = {'sharpe': [], 'max_dd': [], 'total_return': []}
+
+    # Calculate the annualization factor based on DATA_FREQUENCY
+    # This logic tries to determine periods per year based on the frequency string
+    try:
+        annualization_factor = 252 # Default to daily periods if parsing fails or is not supported
+
+        if 'min' in DATA_FREQUENCY.lower():
+            freq_minutes = int(DATA_FREQUENCY.lower().replace('min', '').strip())
+            periods_per_day = (24 * 60) / freq_minutes
+            annualization_factor = 252 * periods_per_day # 252 trading days/year * periods/day
+        elif 'h' in DATA_FREQUENCY.lower():
+            freq_hours = int(DATA_FREQUENCY.lower().replace('h', '').strip())
+            freq_minutes = freq_hours * 60
+            periods_per_day = (24 * 60) / freq_minutes
+            annualization_factor = 252 * periods_per_day
+        elif 'd' in DATA_FREQUENCY.lower(): # Handle 'd' or 'D' for daily
+             periods_per_day = 1 # 1 period per day
+             annualization_factor = 252 * periods_per_day
+        # Add other frequencies like 'w' (weekly), 'm' (monthly) if needed
+        # e.g., elif 'w' in DATA_FREQUENCY.lower(): annualization_factor = 52
+        # e.g., elif 'm' in DATA_FREQUENCY.lower(): annualization_factor = 12
+        else:
+             print(f"Warning: Unknown DATA_FREQUENCY format '{DATA_FREQUENCY}'. Cannot annualize Sharpe ratio correctly.")
+             # annualization_factor remains default 252
+
+        # Ensure positive annualization factor
+        annualization_factor = max(annualization_factor, 1)
+
+    except (ValueError, ZeroDivisionError) as e:
+         print(f"Error parsing DATA_FREQUENCY '{DATA_FREQUENCY}' for annualization: {e}. Using daily annualization (252).")
+         annualization_factor = 252 # Fallback to daily if parsing fails
+
+    sqrt_annualization_factor = np.sqrt(annualization_factor)
+
+    for _ in range(n_iter):
+        # --- Monte Carlo Resampling with Replacement ---
+        # Simulate potential trade sequences by sampling trades with replacement
+        sample = np.random.choice(pnls, size=len(pnls), replace=True)
+        # If you intended just shuffling (sequence risk), use:
+        # sample = np.random.permutation(pnls) # or random.sample(list(pnls), len(pnls))
+
+        # Calculate cumulative sum of PnL
+        cum = np.cumsum(sample) + INITIAL_CAPITAL
+
+        # Calculate Metrics from the simulated equity curve
+        # Handle edge case where cum might have only one element (unlikely with replace=True and >0 trades)
+        if len(cum) <= 1:
+             total_ret = (cum[-1] / INITIAL_CAPITAL - 1) * 100 if len(cum) > 0 else 0.0
+             dd = (np.maximum.accumulate(cum) - cum).max() / INITIAL_CAPITAL * 100 if len(cum) > 0 else 0.0
+             sharpe = 0.0 # Cannot calculate meaningful Sharpe with 0 or 1 point
+        else:
+            # Total Return
+            total_ret = (cum[-1] / INITIAL_CAPITAL - 1) * 100
+
+            # Max Drawdown (as percentage of previous peak equity)
+            peak = np.maximum.accumulate(cum)
+            # Avoid division by zero if peak is 0 (e.g., if initial capital was 0, though not in this case)
+            dd_values = (peak - cum) / np.where(peak == 0, 1, peak) # Calculate relative drawdown
+            dd = dd_values.max() * 100 # Max drawdown percentage
+
+            # Returns for Sharpe ratio (percentage change between periods)
+            # Avoid division by zero if cum[:-1] contains zeros
+            rets = np.diff(cum) / np.where(cum[:-1] == 0, 1, cum[:-1])
+
+            # Calculate Sharpe Ratio
+            # Handle case where returns have no variance
+            std_dev_rets = np.std(rets, ddof=1)
+            if std_dev_rets == 0:
+                sharpe = np.mean(rets) * sqrt_annualization_factor if np.mean(rets) > 0 else 0.0 # Avoid division by zero
+            else:
+                sharpe = np.mean(rets) / std_dev_rets * sqrt_annualization_factor
+
+        results['sharpe'].append(sharpe)
+        results['max_dd'].append(dd)
+        results['total_return'].append(total_ret)
+
+    return results
+
+''' ------------------------------
+Part 4 Optuna Objective Function
+------------------------------ '''
 def objective(trial):
     """
     Objective function for Optuna MULTI-OBJECTIVE optimization.
     Suggests parameters, runs backtest, and returns multiple performance metrics.
     """
-    # 1) Suggest each parameter exactly once:
     ema_fast = trial.suggest_int('ema_fast', 5, 50)
-    # enforce ema_mid > ema_fast + 10
     ema_mid = trial.suggest_int('ema_mid', ema_fast + 10, 150)
-    # enforce ema_slow > ema_mid + 50
     ema_slow = trial.suggest_int('ema_slow', ema_mid + 50, 300)
-
     fixed_sl = trial.suggest_int('fixed_sl', 5, 50)           # SL in pips
     reward_ratio = trial.suggest_float('reward_ratio', 0.5, 5.0, step=0.1)
 
@@ -155,8 +253,8 @@ def objective(trial):
 
     # 3) Prune if too few trades or outright errors
     if portfolio is None or portfolio.trades.count() < MIN_TRADES:
-    # instead of pruning, give it the worst-possible objectives
-        return -np.inf, 0.0, -np.inf
+        # Penalize invalid trials
+        return -np.inf, 0.0, -np.inf, 0.0
 
     # 4) Calculate and return your three metrics
     sharpe       = portfolio.sharpe_ratio() or -1.0
@@ -169,7 +267,7 @@ def objective(trial):
 
 
 ''' ------------------------------
-Part 3, Run Optuna Optimization
+Part 5 Main Execution
 ------------------------------ '''
 if __name__ == '__main__':
     if 'close_prices' in globals() and isinstance(close_prices, pd.Series) and not close_prices.empty:
@@ -183,7 +281,6 @@ if __name__ == '__main__':
         # Define the directions for each objective (must match the order returned by the objective function)
         # Maximize Sharpe, Maximize Win Rate, Maximize Max Drawdown (closer to 0), Maximize Final Equity
         direction = ['maximize', 'maximize', 'maximize', 'maximize']
-
         study = optuna.create_study(
             study_name=study_name,
             storage=storage_name,
@@ -192,7 +289,7 @@ if __name__ == '__main__':
         )
 
         # --- Run Optimization ---
-        n_trials = 10000 # Adjust number of trials as needed
+        n_trials = MC_ITERATIONS # Adjust number of trials as needed
         print(f"🚀 Starting Multi-Objective Optimization for {n_trials} trials...")
         print(f"   Objectives: Sharpe Ratio (max), Win Rate (max), Max Drawdown (max -> min magnitude)")
         print(f"   Study Name: {study_name}")
@@ -251,8 +348,6 @@ if __name__ == '__main__':
             if successful_pareto_count == 0:
                 print("Warning: Although Pareto trials were identified, none had complete/valid objective values.")
 
-
-        # --- [Rest of the code for finding individual bests remains the same] ---
         # --- Optional: Find and display the trial that was best for EACH objective individually ---
         print("\n--- Trials with highest individual metrics (among all completed trials) ---")
 
@@ -327,7 +422,39 @@ if __name__ == '__main__':
                             if final_portfolio is not None:
                                 print("\n--- Performance Metrics (Best Sharpe Params) ---")
                                 print(final_portfolio.stats())
-                                # Plotting Optional
+
+                                # <<< START: Add Monte Carlo Simulation here >>>
+                                if final_portfolio.trades.count() >= MIN_TRADES:
+                                    print(f"\n--- Running Monte Carlo Simulation ({MC_ITERATIONS} iterations) ---")
+                                    mc_results = monte_carlo_trades(final_portfolio, n_iter=MC_ITERATIONS)
+
+                                    # Analyze MC results (e.g., median and percentiles)
+                                    mc_sharpe_median = np.median(mc_results['sharpe'])
+                                    mc_sharpe_10th = np.percentile(mc_results['sharpe'], 10)
+                                    mc_sharpe_90th = np.percentile(mc_results['sharpe'], 90)
+
+                                    # Max Drawdown is negative, so 90th percentile is a 'worse' case (more negative)
+                                    mc_max_dd_median = np.median(mc_results['max_dd'])
+                                    mc_max_dd_10th = np.percentile(mc_results['max_dd'], 10) # Less negative/better
+                                    mc_max_dd_90th = np.percentile(mc_results['max_dd'], 90) # More negative/worse
+
+                                    mc_total_return_median = np.median(mc_results['total_return'])
+                                    mc_total_return_10th = np.percentile(mc_results['total_return'], 10) # Lower bound
+                                    mc_total_return_90th = np.percentile(mc_results['total_return'], 90) # Upper bound
+
+
+                                    print(f"MC Sharpe Ratio (Median): {mc_sharpe_median:.4f}")
+                                    print(f"MC Sharpe Ratio (10th-90th Pctl Range): ({mc_sharpe_10th:.4f}, {mc_sharpe_90th:.4f})")
+                                    print(f"MC Max Drawdown % (Median): {mc_max_dd_median:.4f}")
+                                    print(f"MC Max Drawdown % (10th-90th Pctl Range): ({mc_max_dd_10th:.4f}, {mc_max_dd_90th:.4f})")
+                                    print(f"MC Total Return % (Median): {mc_total_return_median:.2f}")
+                                    print(f"MC Total Return % (10th-90th Pctl Range): ({mc_total_return_10th:.2f}, {mc_total_return_90th:.2f})")
+
+                                    # Plotting Optional
+                                else:
+                                    print("Not enough trades for Monte Carlo simulation with best Sharpe parameters.")
+                                # <<< END: Add Monte Carlo Simulation here >>>
+
                             else:
                                 print("Could not run final backtest with best Sharpe parameters.")
                         else:
@@ -351,7 +478,7 @@ print(f"   Run 'optuna-dashboard {storage_name}' in your terminal to view progre
 Terminal last message 
 
 
-🏁 Optimization Finished.
+🏁 Optimization Finished. (1H data)
 Number of finished trials: 10000
 
 --- Pareto Optimal Trials (63) ---
