@@ -12,8 +12,7 @@ data = yf.Ticker('AAPL').history(period='1y')
 print(data.head())
 '''
 
-cleaned_csv_file = r"C:\Users\loick\Visual Studio Code\My Coding\Quantstrategy\cleaned_USDJPY-2000-2020-15m.csv"
-
+cleaned_csv_file = "/workspace/Quantstrategy/cleaned_EURUSD_Tickstory_15min_5y_clean.csv"
 # Check if cleaned_csv_file is set
 if cleaned_csv_file is None:
     raise ValueError("cleaned_csv_file is not set. Please check the clean_data.py script.")
