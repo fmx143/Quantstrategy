@@ -1,0 +1,12 @@
+numpy==2.4.6
+pandas==3.0.3
+matplotlib==3.11.0
+yfinance==1.5.1
+backtrader==1.9.78.123
+vectorbt==1.1.0
+optuna==4.9.0
+optuna-dashboard==0.20.0
+TA-Lib==0.7.0
+
+# Windows-only, install separately on a Windows machine:
+# MetaTrader5

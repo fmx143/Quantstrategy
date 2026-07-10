@@ -35,9 +35,9 @@ Bollinger bands, ADX/RSI filters, VWAP) — **no machine learning**.
 **Who is it for?** A **personal, single-developer** research repo. It's a working sandbox, not a
 packaged product — expect scripts you run directly rather than a polished CLI.
 
-> ⚠️ **WIP sandbox.** No dependency manifest or automated tests yet; some files carry hardcoded
-> local paths. One strategy (engulfing) is explicitly marked by the author as unprofitable and
-> kept only for reference. Treat everything here as research in progress.
+> ⚠️ **WIP sandbox.** No automated tests yet; some files carry hardcoded local paths. One
+> strategy (engulfing) is explicitly marked by the author as unprofitable and kept only for
+> reference. Treat everything here as research in progress.
 
 > 🔐 **Secrets stay out of git.** Broker credentials belong in an **untracked** `apy.py` (or a
 > `.env`), never committed. Do not paste real logins/passwords into any tracked file. If a
@@ -125,12 +125,12 @@ Quantstrategy/
 ## 📋 Prerequisites
 
 - 🐍 **Python 3** with a virtual environment.
-- 📦 There is **no dependency manifest yet** — install the libraries the scripts import:
-  `backtrader`, `vectorbt`, `optuna`, `optuna-dashboard`, `TA-Lib`, `pandas`, `numpy`,
-  `matplotlib`, `MetaTrader5`, `yfinance`.
+- 📦 Dependencies are pinned in **`requirements.txt`**: `numpy`, `pandas`, `matplotlib`,
+  `yfinance`, `backtrader`, `vectorbt`, `optuna`, `optuna-dashboard`, `TA-Lib`.
 - 🧱 **TA-Lib** needs its native C library installed first (OS-level), before `pip install TA-Lib`.
 - 🖥️ **MetaTrader 5** terminal installed and logged in (for the live scripts). The `MetaTrader5`
-  Python package talks to a running terminal.
+  package is Windows-only and is listed as a comment in `requirements.txt` — install it
+  separately on a Windows machine.
 
 ---
 
@@ -141,9 +141,11 @@ cd Quantstrategy
 python3 -m venv .venv
 source .venv/bin/activate         # Windows: .venv\Scripts\activate
 
-# No requirements.txt yet — install what the scripts import, e.g.:
-pip install backtrader vectorbt optuna optuna-dashboard pandas numpy matplotlib MetaTrader5 yfinance
-# TA-Lib: install the native library first, then:  pip install TA-Lib
+# TA-Lib needs its native C library installed first (OS-level), then:
+pip install -r requirements.txt
+
+# Windows only, for the live MT5 scripts (see comment in requirements.txt):
+pip install MetaTrader5
 ```
 
 > 🔐 Create your own **untracked** `apy.py` with your data paths and MT5 login. Never commit it.
